@@ -77,19 +77,21 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          # 记录主机指纹；同时给后续连接加兜底，避免 keyscan 偶发失败导致部署中断
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: 上传产物
         run: |
           TS=$(date -u +%Y%m%d%H%M%S)
           echo "RELEASE=$TS" >> "$GITHUB_ENV"
           tar czf /tmp/release.tgz -C app .
-          scp -i ~/.ssh/deploy_key /tmp/release.tgz "$SERVER_USER@$SERVER_HOST:/tmp/study-release.tgz"
-          scp -i ~/.ssh/deploy_key deploy/release.sh "$SERVER_USER@$SERVER_HOST:/tmp/study-release.sh"
+          SSH_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+          scp $SSH_OPTS /tmp/release.tgz "$SERVER_USER@$SERVER_HOST:/tmp/study-release.tgz"
+          scp $SSH_OPTS deploy/release.sh "$SERVER_USER@$SERVER_HOST:/tmp/study-release.sh"
 
       - name: 切换版本并重启（失败自动回滚）
         run: |
-          ssh -i ~/.ssh/deploy_key "$SERVER_USER@$SERVER_HOST" "
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new "$SERVER_USER@$SERVER_HOST" "
             set -e
             sed -i 's/\r\$//' /tmp/study-release.sh
             REL=/srv/study/releases/$RELEASE
