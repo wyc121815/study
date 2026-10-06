@@ -1,0 +1,7 @@
+# 允许 deploy 用户以 root 执行有限的命令，用于自动部署
+# 安装到 /etc/sudoers.d/90-study-deploy（权限必须为 0440）
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart study-backend, \
+                          /usr/bin/systemctl start study-backend, \
+                          /usr/bin/systemctl stop study-backend, \
+                          /usr/bin/systemctl is-active study-backend, \
+                          /usr/bin/systemctl reload nginx
