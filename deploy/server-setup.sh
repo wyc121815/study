@@ -81,7 +81,7 @@ echo "==> 8/8 fail2ban 防爆破"
 if ! command -v fail2ban-server >/dev/null 2>&1; then
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban python3-systemd
 fi
-sudo install -m 644 "$SCRIPT_DIR/fail2ban-study.local" /etc/fail2ban/jail.d/study-sshd.local
+sudo install -m 644 "$SCRIPT_DIR/fail2ban-jail.conf" /etc/fail2ban/jail.d/study-sshd.local
 sudo systemctl enable fail2ban >/dev/null 2>&1 || true
 sudo systemctl restart fail2ban
 sleep 3
