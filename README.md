@@ -115,3 +115,37 @@ npm run lint       # ESLint 检查
 - Maven Wrapper 版本在 `backend/.mvn/wrapper/maven-wrapper.properties` 中配置。
 - 前端接口封装位于 `frontend/src/api/client.ts`,统一在这里处理 baseURL 与错误。
 
+## 生产部署
+
+生产环境已配置为 **推送到 main 自动部署**,流水线见 `.github/workflows/deploy.yml`。
+
+| 项目 | 说明 |
+| --- | --- |
+| 服务器 | 腾讯云轻量应用服务器 `101.43.12.14`(Ubuntu 26.04, 2C2G) |
+| 访问地址 | http://101.43.12.14 |
+| 运行用户 | `study`(无登录权限,仅用于运行后端进程) |
+| 部署用户 | `deploy`(CI 专用,只允许重启本服务) |
+| 应用目录 | `/srv/study/releases/<时间戳>/`,`current` 软链指向当前版本 |
+| 后端进程 | systemd 单元 `study-backend.service`,端口 8080 仅监听 127.0.0.1 |
+| Web 服务 | Nginx 托管 `current/web`,并把 `/api` 反向代理到后端 |
+
+发布流程:构建后端 jar 与前端 `dist` → 打包上传 → 解到新的版本目录 →
+切换 `current` 软链 → 重启服务 → 健康检查,失败自动回滚上一版本。
+
+### 首次初始化服务器
+
+```bash
+scp -r deploy ubuntu@<host>:/tmp/study-deploy
+ssh ubuntu@<host> 'bash /tmp/study-deploy/server-setup.sh'
+```
+
+### 手动发布 / 回滚
+
+```bash
+# 手动发布:把 backend.jar 与 web/ 放到新版本目录后执行
+ssh wyc_tencent 'bash /srv/study/release.sh <版本时间戳>'
+
+# 回滚:让 current 指回上一个版本目录再重启
+ssh wyc_tencent 'ln -sfn /srv/study/releases/<旧版本> /srv/study/current \
+  && sudo systemctl restart study-backend'
+```
