@@ -17,7 +17,7 @@ APP_DIR=/srv/study
 LOG_DIR=/var/log/study
 SWAP_FILE=/swapfile
 
-echo "==> 1/7 用户与组"
+echo "==> 1/8 用户与组"
 getent group "$APP_USER" >/dev/null || sudo groupadd --system "$APP_USER"
 id -u "$APP_USER" >/dev/null 2>&1 || sudo useradd --system --create-home \
   --home-dir "/home/$APP_USER" --shell /usr/sbin/nologin --gid "$APP_USER" "$APP_USER"
@@ -25,7 +25,7 @@ id -u "$DEPLOY_USER" >/dev/null 2>&1 || sudo useradd --create-home --shell /bin/
 sudo usermod -aG "$APP_USER" "$DEPLOY_USER"
 echo "    $APP_USER / $DEPLOY_USER 就绪"
 
-echo "==> 2/7 目录结构"
+echo "==> 2/8 目录结构"
 sudo mkdir -p "$APP_DIR/releases" "$LOG_DIR"
 sudo chown -R "$APP_USER:$APP_USER" "$APP_DIR" "$LOG_DIR"
 # setgid：新文件自动继承 study 组，deploy 与 study 都能读写
@@ -33,7 +33,7 @@ sudo chmod 2775 "$APP_DIR" "$APP_DIR/releases"
 sudo chmod 755 "$LOG_DIR"
 echo "    $APP_DIR/releases 就绪"
 
-echo "==> 3/7 运行时依赖"
+echo "==> 3/8 运行时依赖"
 if ! command -v java >/dev/null 2>&1; then
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-21-jre-headless
 fi
@@ -43,7 +43,7 @@ fi
 echo "    $(java -version 2>&1 | head -1)"
 echo "    $(nginx -v 2>&1)"
 
-echo "==> 4/7 Swap 兜底（内存 2G）"
+echo "==> 4/8 Swap 兜底（内存 2G）"
 if swapon --show=NAME 2>/dev/null | grep -q .; then
   echo "    已存在 swap，跳过"
 else
@@ -55,13 +55,13 @@ else
   echo "    已启用 2G swap"
 fi
 
-echo "==> 5/7 systemd 服务"
+echo "==> 5/8 systemd 服务"
 sudo install -m 644 "$SCRIPT_DIR/study-backend.service" /etc/systemd/system/study-backend.service
 sudo systemctl daemon-reload
 sudo systemctl enable study-backend >/dev/null 2>&1 || true
 echo "    已安装 study-backend.service（等待首次发布后启动）"
 
-echo "==> 6/7 Nginx 站点"
+echo "==> 6/8 Nginx 站点"
 sudo install -m 644 "$SCRIPT_DIR/nginx-study.conf" /etc/nginx/sites-available/study
 sudo ln -sfn /etc/nginx/sites-available/study /etc/nginx/sites-enabled/study
 sudo rm -f /etc/nginx/sites-enabled/default
@@ -70,12 +70,22 @@ sudo systemctl enable nginx >/dev/null 2>&1 || true
 sudo systemctl reload nginx
 echo "    Nginx 已加载 study 站点"
 
-echo "==> 7/7 deploy 用户的受限 sudo"
+echo "==> 7/8 deploy 用户的受限 sudo"
 sed "s/^deploy /$DEPLOY_USER /" "$SCRIPT_DIR/sudoers-study-deploy" \
   | sudo tee /etc/sudoers.d/90-study-deploy >/dev/null
 sudo chmod 440 /etc/sudoers.d/90-study-deploy
 sudo visudo -c -f /etc/sudoers.d/90-study-deploy
 echo "    已写入 /etc/sudoers.d/90-study-deploy"
+
+echo "==> 8/8 fail2ban 防爆破"
+if ! command -v fail2ban-server >/dev/null 2>&1; then
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban python3-systemd
+fi
+sudo install -m 644 "$SCRIPT_DIR/fail2ban-study.local" /etc/fail2ban/jail.d/study-sshd.local
+sudo systemctl enable fail2ban >/dev/null 2>&1 || true
+sudo systemctl restart fail2ban
+sleep 3
+sudo fail2ban-client status
 
 echo
 echo "初始化完成"
