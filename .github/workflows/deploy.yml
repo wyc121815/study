@@ -48,15 +48,18 @@ jobs:
 
       - name: 汇总产物
         run: |
-          mkdir -p .deploy/web
-          cp backend/target/*.jar .deploy/backend.jar
-          cp -r frontend/dist/. .deploy/web/
-          ls -la .deploy .deploy/web
+          # 注意：upload-artifact 默认不上传隐藏目录，这里不能用以点开头的目录名
+          mkdir -p staging/web
+          cp backend/target/*.jar staging/backend.jar
+          cp -r frontend/dist/. staging/web/
+          ls -la staging staging/web
 
       - uses: actions/upload-artifact@v4
         with:
           name: app
-          path: .deploy
+          path: staging
+          # 产物为空时直接失败，避免"上传成功但内容为空"这种静默错误
+          if-no-files-found: error
           retention-days: 7
 
   deploy:
