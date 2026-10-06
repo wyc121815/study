@@ -1,0 +1,112 @@
+name: Deploy
+
+# 推送 main 自动发布；也可以在 Actions 页面手动触发
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一时间只允许一个部署在跑，避免两个版本同时切换软链
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  SERVER_HOST: 101.43.12.14
+  SERVER_USER: deploy
+
+jobs:
+  build:
+    name: 构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      - name: 构建后端
+        working-directory: backend
+        run: ./mvnw -B clean package -DskipTests
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 构建前端
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: 汇总产物
+        run: |
+          mkdir -p .deploy/web
+          cp backend/target/*.jar .deploy/backend.jar
+          cp -r frontend/dist/. .deploy/web/
+          ls -la .deploy .deploy/web
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app
+          path: .deploy
+          retention-days: 7
+
+  deploy:
+    name: 发布到服务器
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: app
+          path: app
+
+      - name: 准备 SSH（需要仓库 Secret: DEPLOY_SSH_KEY）
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: 上传产物
+        run: |
+          TS=$(date -u +%Y%m%d%H%M%S)
+          echo "RELEASE=$TS" >> "$GITHUB_ENV"
+          tar czf /tmp/release.tgz -C app .
+          scp -i ~/.ssh/deploy_key /tmp/release.tgz "$SERVER_USER@$SERVER_HOST:/tmp/study-release.tgz"
+          scp -i ~/.ssh/deploy_key deploy/release.sh "$SERVER_USER@$SERVER_HOST:/tmp/study-release.sh"
+
+      - name: 切换版本并重启（失败自动回滚）
+        run: |
+          ssh -i ~/.ssh/deploy_key "$SERVER_USER@$SERVER_HOST" "
+            set -e
+            sed -i 's/\r\$//' /tmp/study-release.sh
+            REL=/srv/study/releases/$RELEASE
+            mkdir -p \$REL
+            tar xzf /tmp/study-release.tgz -C \$REL
+            rm -f /tmp/study-release.tgz
+            bash /tmp/study-release.sh $RELEASE
+          "
+
+      - name: 外网健康检查
+        run: |
+          for i in $(seq 1 10); do
+            if curl -fsS --max-time 5 "http://$SERVER_HOST/actuator/health"; then
+              echo "外网健康检查通过"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "外网健康检查失败"
+          exit 1
