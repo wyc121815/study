@@ -72,7 +72,7 @@ jobs:
           name: app
           path: app
 
-      - name: 准备 SSH（需要仓库 Secret: DEPLOY_SSH_KEY）
+      - name: 准备 SSH 并写入部署密钥
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
