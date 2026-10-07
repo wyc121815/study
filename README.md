@@ -117,6 +117,42 @@ Get-Content logs\auth-service.log -Wait   # 日志（带 traceId）
 .\scripts\stop-services.ps1
 ```
 
+#### 本地起多实例
+
+`conn-service` 的副本数以同一个服务名注册到 Nacos，网关按 `lb://conn-service`
+做轮询，用来验证"额度全局共享、锁跨实例、队列重平衡"这些多实例行为：
+
+```powershell
+.\scripts\start-services.ps1 -ConnReplicas 2
+# 已启动 auth-service (:8081) 日志=auth-service.log
+# 已启动 conn-service (:8082) 日志=conn-service.log
+# 已启动 conn-service (:8083) 日志=conn-service-2.log
+# 已启动 gateway-service (:8080) 日志=gateway-service.log
+```
+
+起始端口可用 `-ConnBasePort` 调整。查看注册情况：
+
+```powershell
+(Invoke-RestMethod 'http://127.0.0.1:18848/nacos/v1/ns/instance/list?serviceName=conn-service').hosts |
+  Select-Object ip, port, healthy
+```
+
+注意两点：
+
+- **必须用默认的 nacos 模式**（不要加 `-Local`）。`-Local` 下网关直连固定地址，
+  只会打到第一个副本。
+- 每个副本的日志是独立的（`conn-service.log` / `conn-service-2.log`），
+  排查"这个请求到底落在哪个实例"就对比两边日志里的 traceId。
+
+本地实测结论（2 副本、每库并发上限 4）：
+
+| 场景 | 结果 |
+| --- | --- |
+| 串行 10 个请求 | 8082 / 8083 各 5 个，轮询生效 |
+| 并发 8 个慢查询 | 只放行 4 个、拒绝 4 个（若额度是每实例一份，应该是 8 个全过） |
+| 清缓存后并发 10 个相同指标 | 实际只查库 1 次（Redis 抢占锁跨实例生效） |
+| 提交 4 个导出任务 | Kafka 消费组 2 个成员分摊分区，4 个全部完成 |
+
 ### 3. 启动前端
 
 ```powershell

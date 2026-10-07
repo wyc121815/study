@@ -1,9 +1,15 @@
-# 启动三个后端服务（本地开发用）。
+# 启动后端服务（本地开发用）。
 #
-#   .\scripts\start-services.ps1
+#   .\scripts\start-services.ps1                        # 单实例
+#   .\scripts\start-services.ps1 -ConnReplicas 2        # 起 2 个 conn-service
 #   .\scripts\start-services.ps1 -MysqlPort 3306 -NacosAddr 127.0.0.1:8848
 #
-# 依赖：已执行 docker compose up -d，或本机自备 MySQL / Nacos。
+# 多实例说明：conn-service 的副本会以同一个服务名注册到 Nacos（8082、8083…），
+# 网关按 lb://conn-service 做负载均衡。Redis 里的数据源并发额度、缓存击穿锁
+# 都是跨实例共享的，所以副本数翻倍不会让数据库看到的并发跟着翻倍。
+# 注意 -Local 模式（不走 Nacos）下网关只会连到第一个副本，验证多实例请用默认的 nacos 模式。
+#
+# 依赖：已执行 docker compose up -d，或本机自备 MySQL / Nacos / Redis / Kafka。
 
 param(
     [string]$MysqlPort = "3307",
@@ -15,6 +21,8 @@ param(
     [string]$RedisPort = "6379",
     [string]$KafkaBootstrap = "127.0.0.1:9092",
     [string]$ExportQueue = "kafka",
+    [int]$ConnReplicas = 1,
+    [int]$ConnBasePort = 8082,
     [int]$HeapMb = 384,
     [switch]$Local
 )
@@ -44,9 +52,18 @@ if ($Local) {
 }
 
 $services = @(
-    @{ Name = 'auth-service';    Port = 8081; Jar = 'auth-service\target\auth-service-0.0.1-SNAPSHOT.jar' },
-    @{ Name = 'conn-service';    Port = 8082; Jar = 'conn-service\target\conn-service-0.0.1-SNAPSHOT.jar' },
-    @{ Name = 'gateway-service'; Port = 8080; Jar = 'gateway-service\target\gateway-service-0.0.1-SNAPSHOT.jar' }
+    @{ Name = 'auth-service'; Port = 8081; Log = 'auth-service'; Jar = 'auth-service\target\auth-service-0.0.1-SNAPSHOT.jar' }
+)
+for ($i = 0; $i -lt [Math]::Max($ConnReplicas, 1); $i++) {
+    $services += @{
+        Name = 'conn-service'
+        Port = $ConnBasePort + $i
+        Log  = if ($i -eq 0) { 'conn-service' } else { "conn-service-$($i + 1)" }
+        Jar  = 'conn-service\target\conn-service-0.0.1-SNAPSHOT.jar'
+    }
+}
+$services += @(
+    @{ Name = 'gateway-service'; Port = 8080; Log = 'gateway-service'; Jar = 'gateway-service\target\gateway-service-0.0.1-SNAPSHOT.jar' }
 )
 
 foreach ($service in $services) {
@@ -63,13 +80,14 @@ foreach ($service in $services) {
 
     $startParams = @{
         FilePath               = 'java'
-        ArgumentList           = @("-Xmx${HeapMb}m", '-jar', $jar)
-        RedirectStandardOutput = (Join-Path $logDir "$($service.Name).log")
-        RedirectStandardError  = (Join-Path $logDir "$($service.Name).err.log")
+        # 显式传端口：多副本时靠它覆盖 jar 里写死的 server.port
+        ArgumentList           = @("-Xmx${HeapMb}m", '-jar', $jar, "--server.port=$($service.Port)")
+        RedirectStandardOutput = (Join-Path $logDir "$($service.Log).log")
+        RedirectStandardError  = (Join-Path $logDir "$($service.Log).err.log")
         WindowStyle            = 'Hidden'
     }
     Start-Process @startParams
-    Write-Host "已启动 $($service.Name) (:$($service.Port))" -ForegroundColor Green
+    Write-Host "已启动 $($service.Name) (:$($service.Port)) 日志=$($service.Log).log" -ForegroundColor Green
     Start-Sleep -Seconds 3
 }
 
@@ -89,8 +107,9 @@ foreach ($service in $services) {
         }
     }
     if (-not $healthy) {
-        Write-Host "  $($service.Name) 启动失败，请看 logs\$($service.Name).log" -ForegroundColor Red
+        Write-Host "  $($service.Name) :$($service.Port) 启动失败，请看 logs\$($service.Log).log" -ForegroundColor Red
     }
 }
 
-Write-Host "`n网关入口: http://localhost:8080    日志目录: $logDir" -ForegroundColor Cyan
+$connPorts = ($services | Where-Object { $_.Name -eq 'conn-service' } | ForEach-Object { $_.Port }) -join ', '
+Write-Host "`n网关入口: http://localhost:8080    conn-service 实例: $connPorts    日志目录: $logDir" -ForegroundColor Cyan
