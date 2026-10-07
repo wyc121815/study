@@ -32,3 +32,5 @@ Thumbs.db
 *.log
 logs/
 
+# ---- 本地组装产物 ----
+build/

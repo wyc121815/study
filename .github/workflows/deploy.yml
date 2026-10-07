@@ -6,7 +6,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# 同一时间只允许一个部署在跑，避免两个版本同时切换软链
+# 同一时间只允许一个部署在跑，避免两个版本同时切软链
 concurrency:
   group: deploy-production
   cancel-in-progress: false
@@ -14,6 +14,7 @@ concurrency:
 env:
   SERVER_HOST: 101.43.12.14
   SERVER_USER: deploy
+  HTTP_PORT: '80'
 
 jobs:
   build:
@@ -29,9 +30,8 @@ jobs:
           distribution: temurin
           cache: maven
 
-      - name: 构建后端
-        working-directory: backend
-        run: ./mvnw -B clean package -DskipTests
+      - name: 构建后端（含单元测试）
+        run: ./mvnw -B clean package
 
       - name: 安装 Node
         uses: actions/setup-node@v4
@@ -46,13 +46,18 @@ jobs:
           npm ci
           npm run build
 
-      - name: 汇总产物
+      - name: 组装发布包
         run: |
-          # 注意：upload-artifact 默认不上传隐藏目录，这里不能用以点开头的目录名
-          mkdir -p staging/web
-          cp backend/target/*.jar staging/backend.jar
+          # 注意：upload-artifact 默认不上传隐藏目录，所以不能用点开头的目录名
+          mkdir -p staging/backend staging/web staging/nginx staging/init
+          for module in auth-service conn-service gateway-service; do
+            cp "$module/target/$module-0.0.1-SNAPSHOT.jar" "staging/backend/$module.jar"
+          done
           cp -r frontend/dist/. staging/web/
-          ls -la staging staging/web
+          cp deploy/docker-compose.yml deploy/Dockerfile staging/
+          cp deploy/nginx/nginx.conf staging/nginx/
+          cp deploy/mysql/init/01-schema.sql staging/init/
+          ls -la staging staging/backend staging/web
 
       - uses: actions/upload-artifact@v4
         with:
@@ -75,15 +80,28 @@ jobs:
           name: app
           path: app
 
-      - name: 准备 SSH 并写入部署密钥
+      - name: 生成服务器端密钥文件
+        run: |
+          cat > app/.env <<EOF
+          MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+          MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+          APP_JWT_SECRET=${{ secrets.APP_JWT_SECRET }}
+          APP_CRYPTO_KEY=${{ secrets.APP_CRYPTO_KEY }}
+          APP_INTERNAL_SECRET=${{ secrets.APP_INTERNAL_SECRET }}
+          APP_ADMIN_USERNAME=${{ vars.APP_ADMIN_USERNAME || 'admin' }}
+          APP_ADMIN_PASSWORD=${{ secrets.APP_ADMIN_PASSWORD }}
+          HTTP_PORT=${HTTP_PORT}
+          EOF
+          chmod 600 app/.env
+
+      - name: 准备 SSH
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          # 记录主机指纹；同时给后续连接加兜底，避免 keyscan 偶发失败导致部署中断
           ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: 上传产物
+      - name: 上传发布包
         run: |
           TS=$(date -u +%Y%m%d%H%M%S)
           echo "RELEASE=$TS" >> "$GITHUB_ENV"
@@ -101,13 +119,13 @@ jobs:
             mkdir -p \$REL
             tar xzf /tmp/study-release.tgz -C \$REL
             rm -f /tmp/study-release.tgz
-            bash /tmp/study-release.sh $RELEASE
+            bash /tmp/study-release.sh $RELEASE $HTTP_PORT
           "
 
       - name: 外网健康检查
         run: |
           for i in $(seq 1 10); do
-            if curl -fsS --max-time 5 "http://$SERVER_HOST/actuator/health"; then
+            if curl -fsS --max-time 5 "http://$SERVER_HOST:$HTTP_PORT/health"; then
               echo "外网健康检查通过"
               exit 0
             fi

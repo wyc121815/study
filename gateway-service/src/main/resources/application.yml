@@ -1,0 +1,99 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway-service
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      # Redis 在建在鉴权关键路径上，超时短一点，挂了也好快速降级
+      timeout: 1s
+      connect-timeout: 1s
+  cloud:
+    nacos:
+      server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+      namespace: ${NACOS_NAMESPACE:}
+      discovery:
+        enabled: ${NACOS_ENABLED:true}
+    gateway:
+      routes:
+        - id: auth-service
+          uri: ${services.auth-uri}
+          predicates:
+            - Path=/api/auth/**,/api/users/**
+        - id: conn-service
+          uri: ${services.conn-uri}
+          predicates:
+            - Path=/api/connections/**,/api/db-types/**
+      globalcors:
+        add-to-simple-url-handler-mapping: true
+        cors-configurations:
+          '[/**]':
+            allowed-origins: ${app.cors.allowed-origins:http://localhost:5173}
+            allowed-methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+            allowed-headers: '*'
+            exposed-headers: [X-Trace-Id]
+            allow-credentials: true
+            max-age: 3600
+
+# 默认走 Nacos 服务发现；local profile 会覆盖成直连地址
+services:
+  auth-uri: lb://auth-service
+  conn-uri: lb://conn-service
+
+app:
+  jwt:
+    # 仅本地开发用的默认值，生产必须用环境变量 APP_JWT_SECRET 覆盖
+    secret: ${APP_JWT_SECRET:ZGV2LW9ubHktc2VjcmV0LWRvLW5vdC11c2UtaW4tcHJvZHVjdGlvbi0xMjM0NTY=}
+    # 访问令牌有效期。配合刷新令牌，登出/改密可立即失效，无需留长过期时间
+    ttl-minutes: 30
+    issuer: conn-platform
+  gateway:
+    permit-paths:
+      - /api/auth/login
+      - /api/auth/refresh
+      # 登出凭刷新令牌即可，访问令牌过期时也能正常登出
+      - /api/auth/logout
+      - /actuator/health
+      - /actuator/info
+    # 内部共享密钥：随请求下发给业务服务，证明身份头来自网关
+    internal-secret: ${APP_INTERNAL_SECRET:dev-internal-secret-change-me}
+    # Redis 抖动时是否放行；生产可设 false 换更高的安全性
+    fail-open-on-redis-error: ${AUTH_FAIL_OPEN:true}
+    # 登录限流：同一 IP 每 60 秒最多 20 次
+    login-max-attempts-per-window: ${AUTH_LOGIN_MAX_ATTEMPTS:20}
+    login-window-seconds: ${AUTH_LOGIN_WINDOW_SECONDS:60}
+  cors:
+    allowed-origins: http://localhost:5173
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    root: info
+    com.example.platform: debug
+    org.springframework.cloud.gateway: info
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{36} - %msg%n"
+
+---
+# 本地模式（SPRING_PROFILES_ACTIVE=local）：不用启动 Nacos，网关直连各服务
+spring:
+  config:
+    activate:
+      on-profile: local
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+
+services:
+  auth-uri: http://localhost:8081
+  conn-uri: http://localhost:8082

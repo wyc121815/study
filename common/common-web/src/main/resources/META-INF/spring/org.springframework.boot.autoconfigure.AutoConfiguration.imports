@@ -1,0 +1,2 @@
+com.example.platform.common.web.CommonWebAutoConfiguration
+com.example.platform.common.web.FeignAutoConfiguration

@@ -1,0 +1,77 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: auth-service
+  datasource:
+    url: "jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/platform_auth?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true"
+    username: ${MYSQL_USER:platform}
+    password: ${MYSQL_PASSWORD:platform123}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 5000
+      pool-name: auth-pool
+  jpa:
+    hibernate:
+      # 表结构由 deploy/mysql/init 维护，应用只读不建表
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: Asia/Shanghai
+  cloud:
+    nacos:
+      server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+      namespace: ${NACOS_NAMESPACE:}
+      discovery:
+        enabled: ${NACOS_ENABLED:true}
+
+app:
+  jwt:
+    secret: ${APP_JWT_SECRET:ZGV2LW9ubHktc2VjcmV0LWRvLW5vdC11c2UtaW4tcHJvZHVjdGlvbi0xMjM0NTY=}
+    ttl-minutes: 30
+    issuer: conn-platform
+  internal:
+    # 与网关保持一致；生产必须用 APP_INTERNAL_SECRET 覆盖
+    secret: ${APP_INTERNAL_SECRET:dev-internal-secret-change-me}
+    # 业务接口默认必须带内部密钥（即必须经过网关）；只有这三个免登录接口例外
+    permit-paths:
+      - /api/auth/login
+      - /api/auth/refresh
+      - /api/auth/logout
+  auth:
+    refresh-ttl-days: ${AUTH_REFRESH_TTL_DAYS:7}
+    max-failed-attempts: ${AUTH_MAX_FAILED_ATTEMPTS:5}
+    lock-minutes: ${AUTH_LOCK_MINUTES:15}
+    min-password-length: ${AUTH_MIN_PASSWORD_LENGTH:8}
+  init:
+    admin-username: ${APP_ADMIN_USERNAME:admin}
+    admin-password: ${APP_ADMIN_PASSWORD:admin123}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    root: info
+    com.example.platform: debug
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{36} - %msg%n"
+
+---
+# 本地模式：不注册到 Nacos，直接以 8081 端口对外提供服务
+spring:
+  config:
+    activate:
+      on-profile: local
+  cloud:
+    nacos:
+      discovery:
+        enabled: false

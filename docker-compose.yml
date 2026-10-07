@@ -1,0 +1,83 @@
+# 本地开发用的基础设施：MySQL + Nacos
+#   docker compose up -d
+#   docker compose logs -f nacos
+#
+# 应用本身在 IDE 或命令行里启动（见 README），方便热更新和调试。
+
+name: conn-platform
+
+services:
+  mysql:
+    # 国内网络直连 Docker Hub 会超时，默认走公共镜像源；
+    # 能直连 Hub 的话把 image 改成 mysql:8.4 即可
+    image: ${MYSQL_IMAGE:-docker.m.daocloud.io/library/mysql:8.4}
+    container_name: conn-platform-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root123456
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --default-time-zone=+08:00
+    ports:
+      # 本机已装的 MySQL 常占用 3306，这里映射到 3307，避免冲突。
+      # 对应地把应用的 MYSQL_PORT 设为 3307（见 README）。
+      - "3307:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 首次启动（数据卷为空时）自动执行建库建表脚本
+      - ./deploy/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  nacos:
+    image: ${NACOS_IMAGE:-docker.m.daocloud.io/nacos/nacos-server:v2.5.1}
+    container_name: conn-platform-nacos
+    restart: unless-stopped
+    environment:
+      MODE: standalone
+      # 内网开发环境关闭鉴权；正式环境务必打开并配置账号
+      NACOS_AUTH_ENABLE: "false"
+      JVM_XMS: 256m
+      JVM_XMX: 384m
+      JVM_XMN: 128m
+      TZ: Asia/Shanghai
+    ports:
+      # 宿主机端口可用 .env 覆盖（Windows 上 8848 可能落在系统保留段里）
+      # 注意：Nacos 客户端按 server-addr 端口 +1000/+1001 推算 gRPC 端口，
+      # 所以改端口时三个映射要一起改，保持 1000 的偏移。
+      - "${NACOS_PORT:-8848}:8848"
+      - "${NACOS_GRPC_PORT:-9848}:9848"
+      - "${NACOS_GRPC_PORT2:-9849}:9849"
+    volumes:
+      - nacos-data:/home/nacos/data
+      - nacos-logs:/home/nacos/logs
+
+  redis:
+    # 网关靠它做访问令牌吊销校验与登录限流
+    image: ${REDIS_IMAGE:-docker.m.daocloud.io/library/redis:7-alpine}
+    container_name: conn-platform-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      # 只给本机开发用；宿主机端口可用 .env 覆盖
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  mysql-data:
+  nacos-data:
+  nacos-logs:
+  redis-data:

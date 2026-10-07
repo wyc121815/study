@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    // 开发环境下把 /api 开头的请求代理到 Spring Boot 后端,避免跨域
+    // 开发环境把 /api 代理到网关(默认 8080),避免跨域
     proxy: {
       '/api': {
         target: 'http://localhost:8080',

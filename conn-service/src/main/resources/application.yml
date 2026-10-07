@@ -1,0 +1,83 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: conn-service
+  datasource:
+    url: "jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/platform_conn?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true"
+    username: ${MYSQL_USER:platform}
+    password: ${MYSQL_PASSWORD:platform123}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 5000
+      pool-name: conn-pool
+  jpa:
+    hibernate:
+      # 表结构由 deploy/mysql/init 维护，应用只读不建表
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: Asia/Shanghai
+  cloud:
+    nacos:
+      server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+      namespace: ${NACOS_NAMESPACE:}
+      discovery:
+        enabled: ${NACOS_ENABLED:true}
+    openfeign:
+      client:
+        config:
+          default:
+            connect-timeout: 2000
+            read-timeout: 5000
+            logger-level: basic
+
+app:
+  jwt:
+    secret: ${APP_JWT_SECRET:ZGV2LW9ubHktc2VjcmV0LWRvLW5vdC11c2UtaW4tcHJvZHVjdGlvbi0xMjM0NTY=}
+    ttl-minutes: 30
+    issuer: conn-platform
+  internal:
+    # 与网关保持一致；业务服务据此判断身份头是否可信
+    secret: ${APP_INTERNAL_SECRET:dev-internal-secret-change-me}
+  # 仅本地开发用的默认密钥，生产必须用 APP_CRYPTO_KEY 覆盖
+  crypto:
+    key: ${APP_CRYPTO_KEY:Y29ubi1wbGF0Zm9ybS1kZXYtYWVzLWtleS0zMmJ5dGU=}
+  connection:
+    test-timeout-seconds: ${CONN_TEST_TIMEOUT:10}
+  clients:
+    # 留空 = 走注册中心 + 负载均衡；本地模式填 http://localhost:8081
+    auth-service-url: ${AUTH_SERVICE_URL:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    root: info
+    com.example.platform: debug
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{36} - %msg%n"
+
+---
+# 本地模式：不注册到 Nacos，直接通过固定地址调用 auth-service
+spring:
+  config:
+    activate:
+      on-profile: local
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+
+app:
+  clients:
+    auth-service-url: ${AUTH_SERVICE_URL:http://localhost:8081}
