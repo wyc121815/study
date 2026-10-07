@@ -13,6 +13,7 @@ import ConnectionForm from '../components/ConnectionForm'
 import Layout from '../components/Layout'
 import Modal from '../components/Modal'
 import { useAuth } from '../auth/AuthContext'
+import { isAdminRole } from '../auth/roles'
 import type { Connection, ConnectionPayload, ConnectionTestResult, DbTypeInfo } from '../types'
 
 const PAGE_SIZE = 10
@@ -40,7 +41,7 @@ function errorMessage(err: unknown): string {
 
 export default function ConnectionsPage() {
   const { user } = useAuth()
-  const canManage = user?.role === 'ADMIN'
+  const canManage = isAdminRole(user?.role)
 
   const [items, setItems] = useState<Connection[]>([])
   const [total, setTotal] = useState(0)
@@ -247,6 +248,7 @@ export default function ConnectionsPage() {
                 <th>地址</th>
                 <th>账号</th>
                 <th>密码</th>
+                <th>查询</th>
                 <th>状态</th>
                 <th>最近测试</th>
                 <th>创建人</th>
@@ -256,13 +258,13 @@ export default function ConnectionsPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="table__empty">
+                  <td colSpan={10} className="table__empty">
                     加载中…
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="table__empty">
+                  <td colSpan={10} className="table__empty">
                     {canManage ? '还没有连接，点右上角「新建连接」添加一条' : '还没有连接'}
                   </td>
                 </tr>
@@ -279,7 +281,12 @@ export default function ConnectionsPage() {
                       {item.databaseName ? `/${item.databaseName}` : ''}
                     </td>
                     <td className="mono">{item.username}</td>
-                    <td className="mono">{item.passwordMasked || '—'}</td>
+                  <td className="mono">{item.passwordMasked || '—'}</td>
+                  <td>
+                    <span className={`badge ${item.queryEnabled ? 'badge--ok' : 'badge--unknown'}`}>
+                      {item.queryEnabled ? '允许' : '仅管理'}
+                    </span>
+                  </td>
                     <td>
                       <span className={`badge badge--${item.status.toLowerCase()}`}>
                         {STATUS_TEXT[item.status] ?? item.status}

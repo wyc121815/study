@@ -1,5 +1,7 @@
 package com.example.platform.conn.repository;
 
+import java.util.List;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -13,6 +15,9 @@ public interface DbConnectionRepository extends JpaRepository<DbConnection, Long
     boolean existsByName(String name);
 
     boolean existsByNameAndIdNot(String name, Long id);
+
+    /** 可用于 SQL / 指标查询的连接。 */
+    List<DbConnection> findByQueryEnabledTrueOrderByIdDesc();
 
     /**
      * 用空串哨兵代替 null 判断，避免 Hibernate 对参数类型推断报错。

@@ -19,6 +19,7 @@ import com.example.platform.auth.entity.SysUser;
 import com.example.platform.auth.repository.SysUserRepository;
 import com.example.platform.common.core.api.ErrorCode;
 import com.example.platform.common.core.exception.BusinessException;
+import com.example.platform.common.core.constant.Roles;
 import com.example.platform.common.security.JwtService;
 import com.example.platform.common.security.LoginUser;
 
@@ -33,6 +34,7 @@ public class AuthService {
     private final RefreshTokenService refreshTokenService;
     private final TokenRevocationService tokenRevocationService;
     private final AuthProperties authProperties;
+    private final PasswordPolicy passwordPolicy;
 
     /**
      * 用户不存在时用来"陪跑"一次 bcrypt 校验的假哈希，避免通过响应时间
@@ -45,13 +47,15 @@ public class AuthService {
                        JwtService jwtService,
                        RefreshTokenService refreshTokenService,
                        TokenRevocationService tokenRevocationService,
-                       AuthProperties authProperties) {
+                       AuthProperties authProperties,
+                       PasswordPolicy passwordPolicy) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.refreshTokenService = refreshTokenService;
         this.tokenRevocationService = tokenRevocationService;
         this.authProperties = authProperties;
+        this.passwordPolicy = passwordPolicy;
         this.dummyPasswordHash = passwordEncoder.encode("dummy-password-for-timing");
     }
 
@@ -129,7 +133,7 @@ public class AuthService {
         }
 
         String nextRefresh = refreshTokenService.rotate(stored, clientIp, userAgent);
-        String accessToken = jwtService.issue(new LoginUser(user.getId(), user.getUsername(), user.getRole()));
+        String accessToken = jwtService.issue(loginUser(user));
         return new LoginResponse(accessToken, "Bearer", jwtService.getTtlSeconds(),
                 nextRefresh, refreshTokenService.getTtlSeconds(), UserInfo.from(user));
     }
@@ -153,7 +157,7 @@ public class AuthService {
             log.warn("修改密码失败，当前密码不匹配: userId={}", userId);
             throw new BusinessException(ErrorCode.BAD_REQUEST, "当前密码不正确");
         }
-        validatePasswordStrength(request.newPassword());
+        passwordPolicy.validate(request.newPassword());
         if (passwordEncoder.matches(request.newPassword(), user.getPassword())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "新密码不能与当前密码相同");
         }
@@ -167,21 +171,18 @@ public class AuthService {
     }
 
     private LoginResponse issueTokens(SysUser user, String clientIp, String userAgent) {
-        String accessToken = jwtService.issue(new LoginUser(user.getId(), user.getUsername(), user.getRole()));
+        String accessToken = jwtService.issue(loginUser(user));
         String refreshToken = refreshTokenService.issue(user.getId(), clientIp, userAgent);
         return new LoginResponse(accessToken, "Bearer", jwtService.getTtlSeconds(),
                 refreshToken, refreshTokenService.getTtlSeconds(), UserInfo.from(user));
     }
 
-    /** 密码强度：长度达标且同时包含字母和数字。 */
-    private void validatePasswordStrength(String password) {
-        int min = authProperties.getMinPasswordLength();
-        boolean hasLetter = password.chars().anyMatch(Character::isLetter);
-        boolean hasDigit = password.chars().anyMatch(Character::isDigit);
-        if (password.length() < min || !hasLetter || !hasDigit) {
-            throw new BusinessException(ErrorCode.WEAK_PASSWORD,
-                    "密码至少 " + min + " 位，且需同时包含字母和数字");
-        }
+    /**
+     * 签发令牌时统一把角色归一化，保证 JWT 与下游身份头里永远是规范写法，
+     * 不会因为库里存了 {@code admin} 而在某一层被当成非管理员。
+     */
+    private static LoginUser loginUser(SysUser user) {
+        return new LoginUser(user.getId(), user.getUsername(), Roles.canonical(user.getRole()));
     }
 
     @Transactional(readOnly = true)

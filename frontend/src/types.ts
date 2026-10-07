@@ -53,6 +53,7 @@ export interface Connection {
   passwordMasked: string
   params?: string | null
   remark?: string | null
+  queryEnabled: boolean
   status: ConnectionStatus
   lastTestAt?: string | null
   lastTestMessage?: string | null
@@ -73,6 +74,7 @@ export interface ConnectionPayload {
   password?: string
   params?: string
   remark?: string
+  queryEnabled?: boolean
 }
 
 export interface ConnectionTestResult {
@@ -80,4 +82,102 @@ export interface ConnectionTestResult {
   message: string
   costMillis: number
   serverInfo?: string | null
+}
+
+/** 结果集列信息 */
+export interface SqlResultColumn {
+  name: string
+  label: string
+  typeName: string
+}
+
+/** SQL 执行结果，行数据按列顺序排列 */
+export interface SqlQueryResult {
+  columns: SqlResultColumn[]
+  rows: (string | number | boolean | null)[][]
+  rowCount: number
+  truncated: boolean
+  elapsedMillis: number
+  statementType: string
+}
+
+export interface SqlQueryPayload {
+  connectionId: number
+  sql: string
+  maxRows?: number
+}
+
+/** 查询用数据源：只暴露开放了查询的连接 */
+export interface DataSource {
+  id: number
+  name: string
+  dbType: string
+  dbTypeLabel: string
+  host: string
+  port: number
+  databaseName?: string | null
+  username: string
+  remark?: string | null
+}
+
+export interface QueryHistoryItem {
+  id: number
+  userId?: number | null
+  username?: string | null
+  connectionId?: number | null
+  connectionName?: string | null
+  sql: string
+  source: string
+  statementType?: string | null
+  rowCount?: number | null
+  elapsedMillis?: number | null
+  success: boolean
+  message?: string | null
+  createdAt: string
+}
+
+export interface Metric {
+  id: number
+  name: string
+  description?: string | null
+  datasourceId: number
+  datasourceName?: string | null
+  datasourceLabel?: string | null
+  sql: string
+  status: string
+  createdBy?: number | null
+  createdByName?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MetricPayload {
+  name: string
+  description?: string
+  datasourceId: number
+  sql: string
+}
+
+export interface ManagedUser {
+  id: number
+  username: string
+  nickname: string
+  role: string
+  status: number
+  lockedUntil?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface UserCreatePayload {
+  username: string
+  password: string
+  nickname: string
+  role: string
+}
+
+export interface UserUpdatePayload {
+  nickname: string
+  role: string
+  status: number
 }

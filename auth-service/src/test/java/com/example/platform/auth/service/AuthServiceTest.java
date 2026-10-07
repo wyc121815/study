@@ -70,7 +70,8 @@ class AuthServiceTest {
         TokenRevocationService tokenRevocationService =
                 new TokenRevocationService(stringRedisTemplate, jwtService, jwtProperties, authProperties);
         authService = new AuthService(userRepository, passwordEncoder, jwtService,
-                refreshTokenService, tokenRevocationService, authProperties);
+                refreshTokenService, tokenRevocationService, authProperties,
+                new PasswordPolicy(authProperties));
     }
 
     @Test

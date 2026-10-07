@@ -42,5 +42,8 @@ public record ConnectionRequest(
         String params,
 
         @Size(max = 512, message = "备注不能超过 512 个字符")
-        String remark) {
+        String remark,
+
+        /** 是否允许用于 SQL / 指标查询；为空按 true 处理。 */
+        Boolean queryEnabled) {
 }

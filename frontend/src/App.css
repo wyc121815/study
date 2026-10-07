@@ -36,6 +36,39 @@
   font-weight: 700;
 }
 
+.topbar__left {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+/* ---------- 顶部导航 ---------- */
+
+.nav {
+  display: flex;
+  gap: 4px;
+}
+
+.nav__link {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #52606d;
+  text-decoration: none;
+}
+
+.nav__link:hover {
+  background: #f5f7fa;
+  color: #1f2933;
+}
+
+.nav__link--active {
+  background: #eef2f7;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
 .topbar__right {
   display: flex;
   align-items: center;
@@ -475,6 +508,239 @@ textarea.field__input {
   margin: 0;
   color: #52606d;
   font-size: 14px;
+}
+
+/* ---------- SQL 查询 ---------- */
+
+.query {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.query__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.query__connection {
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+
+.query__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #52606d;
+}
+
+.query__rows .field__input {
+  width: 110px;
+}
+
+.query__target {
+  margin: 0;
+  color: #7b8794;
+  font-size: 12px;
+}
+
+.query__editor {
+  min-height: 150px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.query-result {
+  margin-top: 8px;
+}
+
+.query-result__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.query-result__index {
+  width: 48px;
+  color: #7b8794;
+  text-align: right;
+}
+
+.query-result__cell {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.query-result__null {
+  color: #9aa5b1;
+  font-style: italic;
+}
+
+/* ---------- 查询台布局 ---------- */
+
+.panel--wide {
+  max-width: 1440px;
+}
+
+.console {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+  align-items: start;
+}
+
+.console__main {
+  min-width: 0;
+}
+
+.console__side {
+  padding: 14px;
+  background: #fafbfc;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+  max-height: 720px;
+  overflow-y: auto;
+}
+
+.side__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.side__head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.side__scope {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.side__error {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: #b91c1c;
+}
+
+.chip {
+  padding: 4px 12px;
+  font-size: 13px;
+  color: #52606d;
+  background: #fff;
+  border: 1px solid #d5dae1;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.chip--active {
+  color: #1d4ed8;
+  background: #eef2f7;
+  border-color: #c7d2fe;
+  font-weight: 600;
+}
+
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+}
+
+.history__open {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.history__sql {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 12.5px;
+  color: #1f2933;
+  word-break: break-all;
+}
+
+.history__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.history__time {
+  font-size: 12px;
+  color: #9aa5b1;
+}
+
+/* ---------- 表单内联开关 ---------- */
+
+.field--check {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.field--check input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: #2563eb;
+}
+
+.field__hint {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-weight: 400;
+  font-size: 12px;
+  color: #7b8794;
+}
+
+@media (max-width: 1080px) {
+  .console {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .console__side {
+    max-height: none;
+  }
 }
 
 @media (max-width: 720px) {

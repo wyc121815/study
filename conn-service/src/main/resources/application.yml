@@ -50,6 +50,13 @@ app:
     key: ${APP_CRYPTO_KEY:Y29ubi1wbGF0Zm9ybS1kZXYtYWVzLWtleS0zMmJ5dGU=}
   connection:
     test-timeout-seconds: ${CONN_TEST_TIMEOUT:10}
+  query:
+    # SQL 执行：默认最多返回 1000 行，硬上限 5000 行，单条语句最多跑 30 秒
+    max-rows: ${QUERY_MAX_ROWS:1000}
+    max-rows-limit: ${QUERY_MAX_ROWS_LIMIT:5000}
+    timeout-seconds: ${QUERY_TIMEOUT:30}
+    # 默认只读：只放行 SELECT/SHOW/DESCRIBE/EXPLAIN 等；确认需要写操作再改 true
+    allow-write: ${QUERY_ALLOW_WRITE:false}
   clients:
     # 留空 = 走注册中心 + 负载均衡；本地模式填 http://localhost:8081
     auth-service-url: ${AUTH_SERVICE_URL:}

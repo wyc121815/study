@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS `db_connection`
     `password_cipher`   VARCHAR(512) NOT NULL COMMENT 'AES-GCM 密文，不存明文',
     `params`            VARCHAR(512) NULL COMMENT '附加 JDBC 参数',
     `remark`            VARCHAR(512) NULL COMMENT '备注',
+    `query_enabled`     TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '是否允许用于 SQL/指标查询，0=仅管理',
     `status`            VARCHAR(32)  NOT NULL DEFAULT 'UNKNOWN' COMMENT 'UNKNOWN/OK/FAILED',
     `last_test_at`      DATETIME(3)  NULL COMMENT '最近一次测试时间',
     `last_test_message` VARCHAR(512) NULL COMMENT '最近一次测试结果',
@@ -77,3 +78,42 @@ CREATE TABLE IF NOT EXISTS `db_connection`
     UNIQUE KEY `uk_db_connection_name` (`name`),
     KEY `idx_db_connection_db_type` (`db_type`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '数据库连接配置';
+
+-- 查询历史：每次 SQL 执行都落一条，既是审计也是"最近查询"的数据源。
+-- 不建外键，连接被删后历史仍保留（快照连接名）。
+CREATE TABLE IF NOT EXISTS `query_history`
+(
+    `id`              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `user_id`         BIGINT       NULL COMMENT '执行人用户 ID',
+    `username`        VARCHAR(64)  NULL COMMENT '执行人登录名快照',
+    `connection_id`   BIGINT       NULL COMMENT '目标连接 ID',
+    `connection_name` VARCHAR(128) NULL COMMENT '目标连接名快照',
+    `sql_text`        TEXT         NOT NULL COMMENT '执行的 SQL',
+    `source`          VARCHAR(32)  NOT NULL DEFAULT 'ADHOC' COMMENT 'ADHOC=查询台 / METRIC=指标',
+    `statement_type`  VARCHAR(32)  NULL COMMENT '语句类型',
+    `row_count`       INT          NULL COMMENT '返回行数',
+    `elapsed_ms`      BIGINT       NULL COMMENT '耗时（毫秒）',
+    `success`         TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否成功',
+    `message`         VARCHAR(512) NULL COMMENT '失败原因或截断提示',
+    `created_at`      DATETIME(3)  NOT NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_query_history_user_time` (`user_id`, `created_at`),
+    KEY `idx_query_history_time` (`created_at`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT 'SQL 查询历史';
+
+-- 指标定义：P1 先承载"把查询台的 SQL 存下来复用"，P2 再补参数与输出契约。
+CREATE TABLE IF NOT EXISTS `metric_definition`
+(
+    `id`            BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `name`          VARCHAR(128) NOT NULL COMMENT '指标名称',
+    `description`   VARCHAR(512) NULL COMMENT '口径说明',
+    `datasource_id` BIGINT       NOT NULL COMMENT '指向 db_connection.id',
+    `sql_text`      TEXT         NOT NULL COMMENT 'SQL，P2 起支持命名参数',
+    `status`        VARCHAR(16)  NOT NULL DEFAULT 'ENABLED' COMMENT 'ENABLED/DISABLED',
+    `created_by`    BIGINT       NULL COMMENT '创建人用户 ID',
+    `created_at`    DATETIME(3)  NOT NULL,
+    `updated_at`    DATETIME(3)  NOT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_metric_definition_name` (`name`),
+    KEY `idx_metric_definition_datasource` (`datasource_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '指标定义';

@@ -25,7 +25,8 @@ public enum ErrorCode {
 
     INTERNAL_ERROR(50000, "服务器内部错误", 500),
     SERVICE_UNAVAILABLE(50300, "依赖服务不可用", 503),
-    CONNECTION_TEST_FAILED(50201, "数据库连接失败", 200);
+    CONNECTION_TEST_FAILED(50201, "数据库连接失败", 200),
+    SQL_EXECUTION_FAILED(50202, "SQL 执行失败", 200);
 
     private final int code;
     private final String message;

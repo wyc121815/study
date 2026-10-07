@@ -27,7 +27,7 @@ spring:
         - id: conn-service
           uri: ${services.conn-uri}
           predicates:
-            - Path=/api/connections/**,/api/db-types/**
+            - Path=/api/connections/**,/api/db-types/**,/api/datasources/**,/api/queries/**,/api/metrics/**
       globalcors:
         add-to-simple-url-handler-mapping: true
         cors-configurations:
@@ -35,7 +35,7 @@ spring:
             allowed-origins: ${app.cors.allowed-origins:http://localhost:5173}
             allowed-methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
             allowed-headers: '*'
-            exposed-headers: [X-Trace-Id]
+            exposed-headers: [X-Trace-Id, Content-Disposition]
             allow-credentials: true
             max-age: 3600
 

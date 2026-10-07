@@ -1,7 +1,9 @@
 # 数据库连接管理平台
 
 一个前后端分离 + 微服务架构的数据库连接管理平台：登录后可以登记、搜索、测试、维护
-各个环境的数据库连接，连接密码加密入库，所有操作可追溯到具体用户。
+各个环境的数据库连接，在已保存的连接上直接执行只读 SQL，连接密码加密入库，
+所有操作可追溯到具体用户。指标查询平台的演进方案见
+[docs/指标查询平台设计.md](docs/指标查询平台设计.md)。
 
 ## 架构
 
@@ -144,8 +146,12 @@ npm run dev
 | POST | `/api/auth/password` | 修改当前用户密码，成功后吊销其它会话 |
 | GET | `/api/auth/me` | 当前登录用户 |
 | GET | `/api/users/{id}` | 用户信息（供服务间调用） |
-| GET | `/api/users` | 用户列表（仅 ADMIN） |
+| GET | `/api/users` | 用户列表，支持 `keyword` / `page` / `size`（仅 ADMIN） |
+| POST | `/api/users` | 新建用户（仅 ADMIN） |
+| PUT | `/api/users/{id}` | 修改昵称 / 角色 / 状态（仅 ADMIN） |
+| POST | `/api/users/{id}/password` | 重置指定用户密码（仅 ADMIN） |
 | GET | `/api/db-types` | 支持的数据库类型列表 |
+| GET | `/api/datasources` | 开放查询的数据源（所有登录用户） |
 | GET | `/api/connections` | 连接列表，支持 `keyword` / `dbType` / `page` / `size` |
 | GET | `/api/connections/{id}` | 连接详情 |
 | POST | `/api/connections` | 新建连接（仅 ADMIN） |
@@ -153,6 +159,17 @@ npm run dev
 | DELETE | `/api/connections/{id}` | 删除连接（仅 ADMIN） |
 | POST | `/api/connections/test` | 用表单参数直接试连，不落库 |
 | POST | `/api/connections/{id}/test` | 对已保存连接试连并记录结果 |
+| POST | `/api/queries/execute` | 在指定连接上执行单条只读 SQL |
+| POST | `/api/queries/export` | 导出查询结果为 CSV |
+| GET | `/api/queries/history` | 查询历史，`scope=mine\|all`（all 仅 ADMIN） |
+| DELETE | `/api/queries/history/{id}` | 删除一条查询历史 |
+| DELETE | `/api/queries/history` | 清空查询历史，支持 `scope=mine\|all` |
+| GET | `/api/metrics` | 指标列表（所有登录用户） |
+| POST | `/api/metrics` | 把 SQL 存为指标（所有登录用户） |
+| PUT | `/api/metrics/{id}` | 修改指标（创建人或 ADMIN） |
+| DELETE | `/api/metrics/{id}` | 删除指标（创建人或 ADMIN） |
+| POST | `/api/metrics/{id}/run` | 执行指标 |
+| POST | `/api/metrics/{id}/export` | 导出指标结果为 CSV |
 | GET | `/actuator/health` | 健康检查 |
 
 所有响应统一为：
@@ -162,6 +179,54 @@ npm run dev
 ```
 
 `code = 0` 表示成功；`401xx` 登录相关，`4xxxx` 请求错误，`5xxxx` 服务端错误。
+
+## SQL 查询
+
+在「SQL 查询」页选择一条已保存的连接，输入单条 SQL 执行，结果以表格返回。
+服务端默认只读，并有三重护栏：
+
+| 护栏 | 默认值 | 配置项 |
+| --- | --- | --- |
+| 语句类型 | 只放行 `SELECT` / `WITH` / `SHOW` / `DESCRIBE` / `EXPLAIN` 等只读语句 | `QUERY_ALLOW_WRITE=false` |
+| 返回行数 | 默认 1000 行，硬上限 5000 行，超出按上限截断并标记 | `QUERY_MAX_ROWS` / `QUERY_MAX_ROWS_LIMIT` |
+| 执行超时 | 单条语句 30 秒，驱动侧 + 线程池双层超时兜底 | `QUERY_TIMEOUT` |
+
+写操作（`INSERT` / `UPDATE` / `DELETE` / DDL）默认被拒绝，也拦截多语句拼接与
+`INTO OUTFILE` 之类的文件操作。确需放开时由管理员设 `QUERY_ALLOW_WRITE=true`，
+但真正的权限边界仍应落在数据库账号自身——平台用的连接账号建议只给只读权限。
+
+每次执行都会写入 `query_history`（操作人、连接、SQL、行数、耗时、成败），
+查询台右侧的「查询历史」可以一键回填重跑；ADMIN 还能切到「全部」视角。
+结果可通过 `POST /api/queries/export` 导出为带 BOM 的 CSV。
+
+## 数据源隔离
+
+连接分两种用途，用 `db_connection.query_enabled` 区分：
+
+| 用途 | 出现在 | 说明 |
+| --- | --- | --- |
+| 仅管理（`query_enabled=0`） | 只在「数据库连接」页 | 只能维护配置、做连通性测试 |
+| 允许查询（`query_enabled=1`） | 也会出现在查询台与指标数据源里 | 可以执行只读 SQL |
+
+`/api/datasources` 只返回开放查询的连接，且不携带密码脱敏值等管理字段。
+服务端在 `SqlQueryService` 里还会再校验一次——即使绕过前端直接调
+`/api/queries/execute`，未开放查询的连接同样会被 403 拒绝。
+
+管理平台自己的连接库默认置为"仅管理"，避免通过查询台读到平台自身的凭据表。
+
+## 用户管理
+
+ADMIN 可以在「用户管理」页新建用户、改昵称/角色、启用/禁用、重置密码。
+几条保护规则：
+
+- 不能修改自己的角色，也不能禁用自己的账号；
+- 系统至少保留一名启用状态的管理员；
+- 改角色/禁用/重置密码后，会立即吊销该用户的全部访问令牌与刷新令牌，旧
+  登录态当场失效，不用等 JWT 自然过期；
+- 用户只能禁用、不提供删除，保留历史记录里的操作人线索。
+
+角色判断统一走 `Roles`（忽略大小写与首尾空白），签发令牌时也会把角色归一化成
+大写。不要在业务代码或前端里直接写 `role == "ADMIN"`。
 
 ## 安全设计
 
@@ -281,6 +346,7 @@ docker compose up -d --build
 ├─ auth-service/               公共服务
 ├─ conn-service/               业务服务
 ├─ frontend/                   React 前端
+├─ docs/                       设计与方案文档
 ├─ docker-compose.yml          本地开发基础设施（MySQL + Nacos + Redis）
 ├─ deploy/
 │  ├─ docker-compose.yml       生产编排

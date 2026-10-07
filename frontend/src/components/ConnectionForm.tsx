@@ -22,6 +22,7 @@ interface FormState {
   password: string
   params: string
   remark: string
+  queryEnabled: boolean
 }
 
 function buildInitialState(initial: Connection | null, dbTypes: DbTypeInfo[]): FormState {
@@ -37,6 +38,7 @@ function buildInitialState(initial: Connection | null, dbTypes: DbTypeInfo[]): F
       password: '',
       params: initial.params ?? '',
       remark: initial.remark ?? '',
+      queryEnabled: initial.queryEnabled,
     }
   }
   const first = dbTypes[0]
@@ -50,6 +52,7 @@ function buildInitialState(initial: Connection | null, dbTypes: DbTypeInfo[]): F
     password: '',
     params: '',
     remark: '',
+    queryEnabled: true,
   }
 }
 
@@ -88,6 +91,7 @@ export default function ConnectionForm({
     password: form.password || undefined,
     params: form.params.trim() || undefined,
     remark: form.remark.trim() || undefined,
+    queryEnabled: form.queryEnabled,
   })
 
   const handleSubmit = (event: FormEvent) => {
@@ -217,6 +221,20 @@ export default function ConnectionForm({
             value={form.remark}
             onChange={(event) => update({ remark: event.target.value })}
           />
+        </label>
+
+        <label className="field field--full field--check">
+          <input
+            type="checkbox"
+            checked={form.queryEnabled}
+            onChange={(event) => update({ queryEnabled: event.target.checked })}
+          />
+          <span>
+            允许用于 SQL / 指标查询
+            <em className="field__hint">
+              关闭后该连接只能做管理与连通性测试，不会出现在查询台和指标的数据源里。
+            </em>
+          </span>
         </label>
       </div>
 

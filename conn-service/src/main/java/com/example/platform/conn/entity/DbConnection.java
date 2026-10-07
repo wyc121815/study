@@ -53,6 +53,13 @@ public class DbConnection {
     @Column(name = "remark", length = 512)
     private String remark;
 
+    /**
+     * 是否允许用于 SQL / 指标查询。管理平台自身的连接库会置 false，
+     * 避免任何人都能从查询台读到平台自己的凭据表。
+     */
+    @Column(name = "query_enabled", nullable = false)
+    private boolean queryEnabled = true;
+
     @Column(name = "status", nullable = false, length = 32)
     private String status = STATUS_UNKNOWN;
 
@@ -167,6 +174,14 @@ public class DbConnection {
 
     public void setRemark(String remark) {
         this.remark = remark;
+    }
+
+    public boolean isQueryEnabled() {
+        return queryEnabled;
+    }
+
+    public void setQueryEnabled(boolean queryEnabled) {
+        this.queryEnabled = queryEnabled;
     }
 
     public String getStatus() {

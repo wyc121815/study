@@ -159,6 +159,7 @@ public class DbConnectionService {
         entity.setUsername(request.username().trim());
         entity.setParams(trimToNull(request.params()));
         entity.setRemark(trimToNull(request.remark()));
+        entity.setQueryEnabled(request.queryEnabled() == null || request.queryEnabled());
     }
 
     private String decryptPassword(DbConnection entity) {

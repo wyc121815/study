@@ -140,3 +140,53 @@ export const http = {
     request<T>(path, { method: 'PUT', body: body === undefined ? undefined : JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 }
+
+/**
+ * 下载二进制响应（如 CSV 导出）。
+ *
+ * <p>不能走 {@link request}，因为它会无条件把响应体当 JSON 解析。</p>
+ */
+export async function download(
+  path: string,
+  body?: unknown,
+): Promise<{ blob: Blob; filename: string }> {
+  await ensureFreshToken()
+  const init: RequestInit = {
+    method: 'POST',
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }
+
+  let response = await doFetch(path, init)
+  if (response.status === 401 && getRefreshToken()) {
+    const refreshed = await refreshOnce()
+    if (refreshed) {
+      response = await doFetch(path, init)
+    }
+  }
+
+  if (!response.ok) {
+    let message = `请求失败（HTTP ${response.status}）`
+    let code = -1
+    try {
+      const payload = (await response.json()) as ApiResult<unknown>
+      if (payload?.message) message = payload.message
+      if (typeof payload?.code === 'number') code = payload.code
+    } catch {
+      // 非 JSON 响应，保留默认提示
+    }
+    if (response.status === 401) {
+      clearSession()
+      unauthorizedHandler?.()
+    }
+    throw new ApiError(message, code, response.status)
+  }
+
+  const blob = await response.blob()
+  return { blob, filename: parseFilename(response.headers.get('Content-Disposition')) }
+}
+
+function parseFilename(header: string | null): string {
+  if (!header) return 'export.csv'
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header)
+  return match ? decodeURIComponent(match[1]) : 'export.csv'
+}
