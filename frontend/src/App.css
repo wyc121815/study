@@ -751,21 +751,6 @@ textarea.field__input {
   gap: 14px;
 }
 
-.switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13px;
-  color: #52606d;
-  cursor: pointer;
-}
-
-.switch input[type='checkbox'] {
-  width: 15px;
-  height: 15px;
-  accent-color: #2563eb;
-}
-
 .metrics-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 268px;

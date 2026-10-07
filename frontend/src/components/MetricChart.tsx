@@ -59,7 +59,7 @@ function buildOption(spec: ChartSpec, type: ChartType): echarts.EChartsCoreOptio
   const axisLabel = spec.dense ? { rotate: 45, hideOverlap: true } : { hideOverlap: true }
 
   if (type === 'pie') {
-    const values = spec.series[0]?.data ?? []
+    const data = buildPieData(spec)
     return {
       tooltip: { trigger: 'item' },
       legend: { bottom: 0, type: 'scroll' },
@@ -70,7 +70,7 @@ function buildOption(spec: ChartSpec, type: ChartType): echarts.EChartsCoreOptio
           center: ['50%', '46%'],
           avoidLabelOverlap: true,
           label: { formatter: '{b}\n{d}%' },
-          data: spec.categories.map((name, index) => ({ name, value: values[index] ?? 0 })),
+          data,
         },
       ],
     }
@@ -99,4 +99,22 @@ function buildOption(spec: ChartSpec, type: ChartType): echarts.EChartsCoreOptio
       barMaxWidth: 36,
     })),
   }
+}
+
+/** 饼图最多直接展示这么多片，其余合并成"其他"，避免几十个切片糊成一团。 */
+const PIE_MAX_SLICES = 12
+
+function buildPieData(spec: ChartSpec): { name: string; value: number }[] {
+  const values = spec.series[0]?.data ?? []
+  const items = spec.categories
+    .map((name, index) => ({ name, value: Math.abs(values[index] ?? 0) }))
+    .filter((item) => item.value > 0)
+
+  if (items.length <= PIE_MAX_SLICES) {
+    return items
+  }
+  const sorted = [...items].sort((left, right) => right.value - left.value)
+  const head = sorted.slice(0, PIE_MAX_SLICES - 1)
+  const rest = sorted.slice(PIE_MAX_SLICES - 1).reduce((sum, item) => sum + item.value, 0)
+  return [...head, { name: '其他', value: rest }]
 }

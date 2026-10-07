@@ -75,7 +75,6 @@ export default function MetricsPage() {
   const [busyId, setBusyId] = useState<number | null>(null)
   const [runState, setRunState] = useState<RunState | null>(null)
   const [view, setView] = useState<ViewMode>('line')
-  const [noCache, setNoCache] = useState(false)
 
   const [editor, setEditor] = useState<EditorState | null>(null)
   const [editorError, setEditorError] = useState('')
@@ -114,12 +113,12 @@ export default function MetricsPage() {
 
   const canEdit = (metric: Metric) => isAdmin || metric.createdBy === user?.id
 
-  const handleRun = async (metric: Metric) => {
+  const handleRun = async (metric: Metric, forceRefresh = false) => {
     setBusyId(metric.id)
     setError('')
     setNotice('')
     try {
-      const result = await runMetric(metric.id, undefined, noCache)
+      const result = await runMetric(metric.id, undefined, forceRefresh)
       setRunState({ metric, result })
       setView(chartSpecOf(result)?.preferred ?? 'table')
       fetchMetricRanking(8).then(setRanking).catch(() => undefined)
@@ -209,14 +208,6 @@ export default function MetricsPage() {
             </p>
           </div>
           <div className="panel__head-actions">
-            <label className="switch">
-              <input
-                type="checkbox"
-                checked={noCache}
-                onChange={(event) => setNoCache(event.target.checked)}
-              />
-              <span>跳过缓存</span>
-            </label>
             <button type="button" className="button button--ghost" onClick={() => void navigate('/sql')}>
               去 SQL 查询
             </button>
@@ -333,26 +324,26 @@ export default function MetricsPage() {
                   <div>
                     <h2>{runState.metric.name}</h2>
                     <p className="muted">
-                      {runState.result.rowCount} 行 ·{' '}
-                      {runState.result.cached
-                        ? `缓存命中（首次查询 ${runState.result.elapsedMillis} ms）`
-                        : `耗时 ${runState.result.elapsedMillis} ms`}
+                      {runState.result.rowCount} 行 · 耗时 {runState.result.elapsedMillis} ms
                       {runState.result.truncated ? ' · 已截断' : ''}
                     </p>
                   </div>
                   <div className="chart-card__actions">
-                    {runState.result.cached ? (
-                      <span className="badge badge--ok">缓存命中</span>
-                    ) : (
-                      <span className="badge badge--unknown">实时查询</span>
-                    )}
+                    <button
+                      type="button"
+                      className="link-button"
+                      disabled={busyId === runState.metric.id}
+                      onClick={() => void handleRun(runState.metric, true)}
+                    >
+                      刷新
+                    </button>
                     <div className="segmented">
                       {VIEW_OPTIONS.map((option) => (
                         <button
                           key={option.value}
                           type="button"
                           className={view === option.value ? 'segmented__item segmented__item--active' : 'segmented__item'}
-                          disabled={option.value === 'pie' && !chartSpec?.pieCapable}
+                          disabled={option.value !== 'table' && !chartSpec}
                           onClick={() => setView(option.value)}
                         >
                           {option.label}
@@ -437,7 +428,7 @@ export default function MetricsPage() {
                 ))}
               </ol>
             )}
-            <p className="side__note">次数由 Redis 计数，用于热度排序</p>
+            <p className="side__note">按使用次数排序</p>
           </aside>
         </div>
       </section>

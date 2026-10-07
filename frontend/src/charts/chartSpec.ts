@@ -20,8 +20,6 @@ export interface ChartSpec {
   series: ChartSeries[]
   /** 建议的默认图表类型 */
   preferred: ChartType
-  /** 可用于饼图（单维度单度量）时为 true */
-  pieCapable: boolean
   categoryLabel: string
   valueLabel: string
   /** 数据点太多时，X 轴只显示部分标签 */
@@ -70,7 +68,6 @@ export function buildChartSpec(result: SqlQueryResult): ChartSpec | null {
       categories,
       series,
       preferred: 'line',
-      pieCapable: false,
       categoryLabel: label(columns[timeIndex].label, columns[timeIndex].name),
       valueLabel: label(columns[measureIndex].label, columns[measureIndex].name),
       dense,
@@ -89,8 +86,6 @@ export function buildChartSpec(result: SqlQueryResult): ChartSpec | null {
     categories,
     series,
     preferred: 'bar',
-    // 饼图只画第一个度量（占比本来就该看单一指标），维度唯一时即可用
-    pieCapable: dimensionIndexes.length === 1,
     categoryLabel: label(columns[categoryIndex].label, columns[categoryIndex].name),
     valueLabel: label(columns[measureIndexes[0]].label, columns[measureIndexes[0]].name),
     dense,
