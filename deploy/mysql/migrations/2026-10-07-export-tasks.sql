@@ -3,6 +3,9 @@
 -- 用法（容器里执行）：
 --   docker exec -i conn-platform-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" < 2026-10-07-export-tasks.sql
 
+-- mysql 客户端默认连接字符集是 latin1，不声明的话脚本里的中文注释会乱码
+SET NAMES utf8mb4;
+
 USE `platform_conn`;
 
 CREATE TABLE IF NOT EXISTS `query_export_task`

@@ -4,6 +4,9 @@
 --   docker exec -i conn-platform-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" < 2026-10-07-query-platform.sql
 -- 本地开发库同理，把容器名/密码换成自己的。
 
+-- mysql 客户端默认连接字符集是 latin1，不声明的话脚本里的中文注释会乱码
+SET NAMES utf8mb4;
+
 USE `platform_conn`;
 
 -- db_connection.query_enabled：控制该连接是否允许被用于 SQL / 指标查询。

@@ -393,8 +393,15 @@ docker compose up -d
 >
 > ```powershell
 > Get-Content deploy\mysql\migrations\2026-10-07-auth-hardening.sql |
->   docker exec -i conn-platform-mysql mysql -uroot -proot123456
+>   docker exec -i conn-platform-mysql mysql -uroot -proot123456 --default-character-set=utf8mb4
 > ```
+
+> **灌 SQL 脚本一定要带 `--default-character-set=utf8mb4`**（或者确保脚本开头有
+> `SET NAMES utf8mb4`）。`mysql` 客户端的连接字符集默认是 latin1，官方镜像执行
+> `docker-entrypoint-initdb.d` 时也不会替你指定，脚本里的中文会被当成 latin1 再转一次，
+> 存进库就是"双重编码"的乱码——表注释、中文数据都会中招，
+> 而且**数据看起来是存进去了、只是内容不对**，很难第一时间发现。
+> `SqlScriptCharsetTest` 会强制检查这一点。
 
 ## 常见命令
 

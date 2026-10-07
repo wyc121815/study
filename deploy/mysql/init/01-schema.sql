@@ -1,5 +1,11 @@
 -- 容器首次启动时自动执行（docker-entrypoint-initdb.d）
 -- 两个库分别属于 auth-service 与 conn-service，服务之间不跨库直接连表。
+--
+-- 第一行的 SET NAMES 不能删：mysql 客户端的连接字符集默认是 latin1，
+-- 官方镜像执行 initdb 脚本、以及我们用 docker exec 跑迁移时都不会带
+-- --default-character-set，不加这一句文件里的中文会被当成 latin1 再转一次，
+-- 存进去就是"双重编码"的乱码（表和字段注释、中文数据都会中招）。
+SET NAMES utf8mb4;
 
 CREATE DATABASE IF NOT EXISTS `platform_auth`
     DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;

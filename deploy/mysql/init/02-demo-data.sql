@@ -3,6 +3,10 @@
 -- 目的：让 SQL 查询台和指标图表一上手就有真实形状的数据可看，而不是空表。
 -- 这个库和平台的业务库完全隔离，demo_reader 只有 SELECT 权限。
 
+-- 必须放在最前面：mysql 客户端默认连接字符集是 latin1，
+-- 不声明的话下面 sales_daily 里的中文（华东/华北/华南）会被双重编码成乱码。
+SET NAMES utf8mb4;
+
 CREATE DATABASE IF NOT EXISTS `platform_demo`
     DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 
