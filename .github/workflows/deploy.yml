@@ -1,9 +1,13 @@
 name: Deploy
 
-# 推送 main 自动发布；也可以在 Actions 页面手动触发
+# 服务器（2C2G）目前没装 Docker，整栈跑不起来。而 release.sh 是"先切 current
+# 软链、再拉容器"，部署失败会留下指向不完整版本的软链——线上 nginx 的 root 就是
+# /srv/study/current/web，会立刻变成"新前端打旧后端"。
+# 因此暂时关掉自动触发，只保留手动执行（Actions 页面点 Run workflow）。
+# 服务器就绪后把下面两行注释还原即可恢复"推 main 自动发布"：
+#   push:
+#     branches: [main]
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 # 同一时间只允许一个部署在跑，避免两个版本同时切软链
