@@ -12,12 +12,18 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import jakarta.annotation.PreDestroy;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,49 +58,77 @@ public class SqlQueryService {
     private final AesCipher cipher;
     private final SqlStatementGuard guard;
     private final QueryHistoryService historyService;
+    private final DatasourceConcurrencyLimiter limiter;
     private final int defaultMaxRows;
     private final int maxRowsLimit;
     private final int timeoutSeconds;
     private final boolean allowWrite;
 
-    private final ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
-        Thread thread = new Thread(runnable, "sql-query");
-        thread.setDaemon(true);
-        return thread;
-    });
+    /**
+     * 查询执行池必须是有界的：{@code newCachedThreadPool} 来多少请求开多少线程，
+     * 每条线程再开一个到目标库的连接，数据库连接数瞬间被打满——"并发有限制"说的就是这件事。
+     *
+     * <p>线程数固定、队列有界、排满即拒绝（回 429）。队列只是缓冲，不产生容量；
+     * 无限排队只会把"快速失败"拖成"慢慢超时"。</p>
+     */
+    private final ThreadPoolExecutor executor;
 
     public SqlQueryService(DbConnectionRepository repository,
                            AesCipher cipher,
                            SqlStatementGuard guard,
                            QueryHistoryService historyService,
+                           DatasourceConcurrencyLimiter limiter,
                            @Value("${app.query.max-rows:1000}") int defaultMaxRows,
                            @Value("${app.query.max-rows-limit:5000}") int maxRowsLimit,
                            @Value("${app.query.timeout-seconds:30}") int timeoutSeconds,
-                           @Value("${app.query.allow-write:false}") boolean allowWrite) {
+                           @Value("${app.query.allow-write:false}") boolean allowWrite,
+                           @Value("${app.query.worker-threads:8}") int workerThreads,
+                           @Value("${app.query.queue-capacity:100}") int queueCapacity) {
         this.repository = repository;
         this.cipher = cipher;
         this.guard = guard;
         this.historyService = historyService;
+        this.limiter = limiter;
         this.defaultMaxRows = defaultMaxRows;
         this.maxRowsLimit = maxRowsLimit;
         this.timeoutSeconds = timeoutSeconds;
         this.allowWrite = allowWrite;
+        int threads = Math.max(workerThreads, 1);
+        this.executor = new ThreadPoolExecutor(
+                threads, threads,
+                60L, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(Math.max(queueCapacity, 1)),
+                new SqlQueryThreadFactory(),
+                new ThreadPoolExecutor.AbortPolicy());
+        this.executor.allowCoreThreadTimeOut(true);
+        log.info("查询执行池已就绪: 线程数={}, 队列容量={}, 单条超时={}s, 只读模式={}",
+                threads, Math.max(queueCapacity, 1), timeoutSeconds, !allowWrite);
+    }
+
+    @PreDestroy
+    void shutdown() {
+        executor.shutdownNow();
     }
 
     public SqlQueryResponse execute(SqlQueryRequest request) {
         return execute(request.connectionId(), request.sql(), request.maxRows(), QueryHistory.SOURCE_ADHOC);
     }
 
+    public SqlQueryResponse execute(Long connectionId, String sql, Integer maxRows, String source) {
+        LoginUser user = UserContext.get();
+        return execute(connectionId, sql, maxRows, source,
+                user == null ? null : user.userId(),
+                user == null ? null : user.username());
+    }
+
     /**
      * 执行一条 SQL。
      *
      * @param source 记录到查询历史的来源（查询台 / 指标）
+     * @param userId 执行人；消息队列消费时没有请求上下文，需要显式传入
      */
-    public SqlQueryResponse execute(Long connectionId, String sql, Integer maxRows, String source) {
-        LoginUser user = UserContext.get();
-        Long userId = user == null ? null : user.userId();
-        String username = user == null ? null : user.username();
-
+    public SqlQueryResponse execute(Long connectionId, String sql, Integer maxRows, String source,
+                                    Long userId, String username) {
         DbConnection entity = repository.findById(connectionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND,
                         "连接不存在: " + connectionId));
@@ -137,8 +171,24 @@ public class SqlQueryService {
     private SqlQueryResponse runWithTimeout(DbType dbType, String url, String username, String password,
                                             String sql, int maxRows, String statementType,
                                             DbConnection entity, Long userId, long start) {
-        Future<SqlQueryResponse> future = executor.submit(
-                () -> runQuery(dbType, url, username, password, sql, maxRows, statementType));
+        Future<SqlQueryResponse> future;
+        try {
+            future = executor.submit(() -> {
+                Long datasourceId = entity.getId();
+                if (!limiter.acquire(datasourceId)) {
+                    throw new BusinessException(ErrorCode.TOO_MANY_REQUESTS,
+                            "数据源「" + entity.getName() + "」并发查询已达上限（" + limiter.limit() + "），请稍后重试");
+                }
+                try {
+                    return runQuery(dbType, url, username, password, sql, maxRows, statementType);
+                } finally {
+                    limiter.release(datasourceId);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            log.warn("查询排队已满，拒绝执行: userId={}, connectionId={}", userId, entity.getId());
+            throw new BusinessException(ErrorCode.TOO_MANY_REQUESTS, "查询排队已满，请稍后重试");
+        }
 
         try {
             SqlQueryResponse result = future.get(timeoutSeconds + 1L, TimeUnit.SECONDS);
@@ -154,6 +204,13 @@ public class SqlQueryService {
                     "查询超时（超过 " + timeoutSeconds + " 秒）");
         } catch (ExecutionException e) {
             Throwable cause = e.getCause() == null ? e : e.getCause();
+            // 任务内部抛的业务异常（比如限流 429）要保留自己的错误码，
+            // 不能被统一压成"SQL 执行失败"的 200。
+            if (cause instanceof BusinessException business) {
+                log.warn("SQL 执行被业务规则拒绝: userId={}, connectionId={}, message={}",
+                        userId, entity.getId(), business.getMessage());
+                throw business;
+            }
             log.warn("SQL 执行失败: userId={}, connectionId={}, error={}", userId, entity.getId(), cause.getMessage());
             throw new BusinessException(ErrorCode.SQL_EXECUTION_FAILED, describe(cause));
         } catch (InterruptedException e) {
@@ -255,5 +312,18 @@ public class SqlQueryService {
     private static String oneLine(String sql) {
         String trimmed = sql.trim();
         return trimmed.length() <= 200 ? trimmed : trimmed.substring(0, 200) + "…";
+    }
+
+    /** 线程命名带上序号，出问题看 jstack / 线程转储时一眼能认出是谁。 */
+    private static final class SqlQueryThreadFactory implements ThreadFactory {
+
+        private final AtomicInteger counter = new AtomicInteger();
+
+        @Override
+        public Thread newThread(Runnable runnable) {
+            Thread thread = new Thread(runnable, "sql-query-" + counter.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        }
     }
 }

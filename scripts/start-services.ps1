@@ -13,6 +13,8 @@ param(
     [string]$MysqlPassword = "platform123",
     [string]$RedisHost = "127.0.0.1",
     [string]$RedisPort = "6379",
+    [string]$KafkaBootstrap = "127.0.0.1:9092",
+    [string]$ExportQueue = "kafka",
     [int]$HeapMb = 384,
     [switch]$Local
 )
@@ -30,6 +32,9 @@ $env:MYSQL_PASSWORD = $MysqlPassword
 $env:NACOS_ADDR = $NacosAddr
 $env:REDIS_HOST = $RedisHost
 $env:REDIS_PORT = $RedisPort
+$env:KAFKA_BOOTSTRAP = $KafkaBootstrap
+# redis = Redis Streams；kafka 不可用时导出会自动降级为同步执行
+$env:EXPORT_QUEUE_TYPE = $ExportQueue
 if ($Local) {
     $env:SPRING_PROFILES_ACTIVE = 'local'
     Write-Host '模式: local（不依赖 Nacos，服务间直连）' -ForegroundColor Yellow

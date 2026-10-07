@@ -67,11 +67,42 @@ app:
     allow-write: ${QUERY_ALLOW_WRITE:false}
     # 指标结果缓存时长（秒）；设为 0 关闭缓存
     cache-seconds: ${QUERY_CACHE_SECONDS:300}
+    # 执行层并发控制：每实例工作线程数 + 排队上限，排满直接拒绝，不无限堆积
+    worker-threads: ${QUERY_WORKER_THREADS:8}
+    queue-capacity: ${QUERY_QUEUE_CAPACITY:100}
+    # 单个数据源的并发查询上限：存在 Redis 里，多实例共享同一个额度
+    per-datasource-concurrency: ${QUERY_DATASOURCE_CONCURRENCY:4}
+    # 抢不到数据源额度时最多等多久，等不到就 429
+    datasource-acquire-wait-ms: ${QUERY_DATASOURCE_ACQUIRE_WAIT_MS:2000}
+    # 缓存击穿保护：抢到锁的实例去查库，其他实例最多等这么久
+    single-flight-wait-ms: ${QUERY_SINGLEFLIGHT_WAIT_MS:1500}
+    single-flight-lock-seconds: ${QUERY_SINGLEFLIGHT_LOCK_SECONDS:35}
+  export:
+    queue:
+      # redis = Redis Streams（默认，随平台一起就有）；kafka = 需要额外部署 broker
+      type: ${EXPORT_QUEUE_TYPE:redis}
+      stream: ${EXPORT_STREAM:query:export:tasks}
+      topic: ${EXPORT_TOPIC:query-export-tasks}
+      consumer-group: ${EXPORT_CONSUMER_GROUP:conn-service-export}
+      # 卡在 RUNNING 超过这个时间的任务会被重新投递
+      stuck-minutes: ${EXPORT_STUCK_MINUTES:5}
+    # 导出结果保留时长（分钟），过期由定时任务清理
+    ttl-minutes: ${EXPORT_TTL_MINUTES:120}
+    # 关掉就直接同步导出（Kafka/Redis 都不可用时也能工作）
+    async-enabled: ${EXPORT_ASYNC_ENABLED:true}
   demo:
     # 首次启动时创建演示数据源与演示指标（幂等）；生产可设 APP_DEMO_ENABLED=false 关闭
     enabled: ${APP_DEMO_ENABLED:true}
     host: ${MYSQL_HOST:127.0.0.1}
     port: ${MYSQL_PORT:3306}
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:127.0.0.1:9092}
+    consumer:
+      group-id: ${EXPORT_CONSUMER_GROUP:conn-service-export}
+      auto-offset-reset: earliest
+    listener:
+      concurrency: ${EXPORT_CONSUMER_CONCURRENCY:2}
   clients:
     # 留空 = 走注册中心 + 负载均衡；本地模式填 http://localhost:8081
     auth-service-url: ${AUTH_SERVICE_URL:}

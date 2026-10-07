@@ -27,7 +27,8 @@
         │                                   │
         └───────────────┬───────────────────┘
                         ▼
-    nacos（注册中心）  redis（令牌吊销）  mysql（platform_auth / platform_conn）
+    nacos（注册中心）  redis（令牌吊销 / 指标缓存 / 并发额度）
+    kafka（批量导出队列）  mysql（platform_auth / platform_conn / platform_demo）
 
 公共依赖库（JAR，不是独立进程）：common-core · common-security · common-web
 ```
@@ -54,7 +55,8 @@
 | Spring Cloud Alibaba | 2025.0.0.0 | 提供 Nacos 注册中心支持 |
 | Nacos | 2.5.1 | 注册中心（standalone，内嵌存储） |
 | MySQL | 8.4 | 两个库：`platform_auth`、`platform_conn` |
-| Redis | 7 | 访问令牌吊销名单（jti 黑名单 + 用户级水位）与登录限流计数 |
+| Redis | 7 | 网关：令牌吊销名单 + 登录限流；conn-service：指标结果缓存、热度排行、数据源并发额度 |
+| Kafka | 3.9（KRaft） | 批量导出任务队列，单节点即可，不需要 ZooKeeper |
 | JJWT | 0.12.6 | JWT 签发/校验 |
 | React / Vite / TS | 18 / 5 / 5.6 | react-router-dom 7 做路由 |
 
@@ -71,7 +73,7 @@
 ### 1. 启动基础设施
 
 ```powershell
-docker compose up -d          # MySQL + Nacos + Redis
+docker compose up -d          # MySQL + Nacos + Redis + Kafka
 docker compose ps
 ```
 
@@ -171,6 +173,11 @@ npm run dev
 | POST | `/api/metrics/{id}/run` | 执行指标 |
 | GET | `/api/metrics/ranking` | 指标热度排行（次数存在 Redis） |
 | POST | `/api/metrics/{id}/export` | 导出指标结果为 CSV |
+| POST | `/api/exports` | 提交批量导出任务（连接+SQL 或指标 ID），立即返回任务号 |
+| GET | `/api/exports` | 导出任务列表，`scope=mine\|all`（all 仅 ADMIN） |
+| GET | `/api/exports/{taskId}` | 导出任务状态 |
+| GET | `/api/exports/{taskId}/download` | 下载导出结果 |
+| DELETE | `/api/exports/{taskId}` | 删除导出任务与结果 |
 | GET | `/actuator/health` | 健康检查 |
 
 所有响应统一为：
@@ -252,6 +259,51 @@ Redis 只当加速层：读写失败一律降级为直接查库，不影响查�
 
 指标热度排行用的是 Redis 的 ZSET（`metric:usage`），每次执行指标
 `ZINCRBY` 累加一次，指标名在返回时从库里补齐；指标被删掉也不会影响其余排行。
+
+## 并发控制与多实例
+
+数据库的连接数和并发查询能力都是有限的，所以请求侧做了三道闸门，而且都是
+**按多实例来设计的**——每一条在起多个 conn-service 时依然成立：
+
+| 闸门 | 位置 | 多实例下的行为 |
+| --- | --- | --- |
+| 有界执行池 | 每个实例 | `ThreadPoolExecutor(8 线程, 队列 100)`，排满直接拒绝（429），不会无限堆线程 |
+| 数据源并发额度 | Redis | `INCR/DECR` + 租约的分布式计数器，默认每库 4 个并发，**多实例共享同一份额度** |
+| 缓存击穿锁 | Redis | `SET NX` 抢占式短锁，热点 key 过期时只有一个实例去查库 |
+
+实测：把单库额度设成 1，3 个真并发慢查询里 2 个被拒（HTTP 429 / code 42900），
+1 个正常返回；清空缓存后 10 个并发请求打同一个指标，实际只查库 1 次。
+
+缓存侧另外做了两件事：写入 TTL 带 ±10% 随机抖动，避免一批 key 同时过期（雪崩）；
+不存在的指标 ID 会写一条 30 秒负缓存，挡住拿随机 ID 反复刷库的穿透。
+
+## 批量导出与队列
+
+导出不走同步请求——一次导出可能扫很多行、跑十几秒，同步会占着 Tomcat 线程和
+数据库连接。现在的流程是：
+
+```
+POST /api/exports  → 落一条 PENDING 记录 + 投队列  → 立刻返回 taskId
+                    → 消费者执行 SQL → CSV 写回任务表 → 状态 DONE
+前端轮询状态 → 完成后 GET /api/exports/{taskId}/download 下载
+```
+
+队列默认用 **Kafka**（`EXPORT_QUEUE_TYPE=kafka`），消息键是连接 ID，
+同一个库的导出落进同一分区；把消费者并发数设成每库允许的并发数，队列本身就是
+一层限流。也可以切成 Redis Streams（`EXPORT_QUEUE_TYPE=redis`），语义一样
+（消费组 + ACK + pending），省掉一个 Kafka 实例。
+
+几个细节：
+
+- **至少一次投递 + CAS 认领**：消费者把 `PENDING` 原子改成 `RUNNING` 才算认领成功，
+  重复消息不会把同一条 SQL 跑两遍。
+- **兜底重投**：任务卡在 PENDING/RUNNING 超过 `EXPORT_STUCK_MINUTES`（默认 5 分钟，
+  消息丢了、实例被 kill 都会这样）会被定时任务重新投递。
+- **降级**：队列不可用时自动同步执行，功能不丢；`EXPORT_ASYNC_ENABLED=false`
+  可以整体关掉异步。
+- **清理**：结果默认保留 `EXPORT_TTL_MINUTES`（120 分钟）后由定时任务删除。
+- 想同步小结果集直接下载，仍然可以用 `POST /api/queries/export` 与
+  `POST /api/metrics/{id}/export`。
 
 ### 演示数据
 
@@ -368,9 +420,13 @@ docker compose up -d --build
 
 ### 容量说明
 
-整栈常驻内存约 2.5-3.5G，**2C2G 的机器跑不动**。当前服务器是 2C2G，
-上生产前需要先升配到 4C8G，或者：把 Nacos 换成外部实例、用
-`-Local` 模式省掉注册中心、把 MySQL 换成外部实例。
+整栈（含 Kafka）常驻内存约 3.5-4.5G，**2C2G 的机器跑不动**。当前服务器是 2C2G，
+上生产前需要先升配到 4C8G，或者按下面的取舍省内存：
+
+- 把 Nacos 换成外部实例，或者用 `-Local` 模式省掉注册中心；
+- 把 MySQL 换成外部实例；
+- 把 `EXPORT_QUEUE_TYPE` 改成 `redis`，省掉 Kafka（导出改用 Redis Streams，
+  语义一样）。
 
 ## 目录结构
 

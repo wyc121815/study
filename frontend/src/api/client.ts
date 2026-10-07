@@ -149,6 +149,7 @@ export const http = {
 export async function download(
   path: string,
   body?: unknown,
+  fallbackFilename = 'export.csv',
 ): Promise<{ blob: Blob; filename: string }> {
   await ensureFreshToken()
   const init: RequestInit = {
@@ -182,11 +183,12 @@ export async function download(
   }
 
   const blob = await response.blob()
-  return { blob, filename: parseFilename(response.headers.get('Content-Disposition')) }
+  const filename = parseFilename(response.headers.get('Content-Disposition')) ?? fallbackFilename
+  return { blob, filename }
 }
 
-function parseFilename(header: string | null): string {
-  if (!header) return 'export.csv'
+function parseFilename(header: string | null): string | null {
+  if (!header) return null
   const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header)
-  return match ? decodeURIComponent(match[1]) : 'export.csv'
+  return match ? decodeURIComponent(match[1]) : null
 }

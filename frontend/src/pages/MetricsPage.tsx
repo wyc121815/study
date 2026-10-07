@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom'
 import { fetchDataSources } from '../api/datasource'
 import {
   deleteMetric,
-  exportMetricCsv,
   fetchMetricRanking,
   fetchMetrics,
   runMetric,
@@ -12,9 +11,11 @@ import {
 } from '../api/metric'
 import { useAuth } from '../auth/AuthContext'
 import { isAdminRole } from '../auth/roles'
+import ExportTasksPanel from '../components/ExportTasksPanel'
 import Layout from '../components/Layout'
 import Modal from '../components/Modal'
 import { buildChartSpec, type ChartType } from '../charts/chartSpec'
+import { useExportTasks } from '../hooks/useExportTasks'
 import type { DataSource, Metric, MetricRankItem, SqlQueryResult } from '../types'
 
 type ViewMode = ChartType | 'table'
@@ -36,17 +37,6 @@ function errorMessage(err: unknown): string {
 function formatTime(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
-}
-
-function saveBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  URL.revokeObjectURL(url)
 }
 
 interface RunState {
@@ -79,6 +69,8 @@ export default function MetricsPage() {
   const [editor, setEditor] = useState<EditorState | null>(null)
   const [editorError, setEditorError] = useState('')
   const [editorBusy, setEditorBusy] = useState(false)
+
+  const exports = useExportTasks()
 
   const chartSpec = useMemo(
     () => (runState ? buildChartSpec(runState.result) : null),
@@ -133,10 +125,10 @@ export default function MetricsPage() {
   const handleExport = async (metric: Metric) => {
     setBusyId(metric.id)
     setError('')
+    setNotice('')
     try {
-      const file = await exportMetricCsv(metric.id)
-      saveBlob(file.blob, file.filename)
-      setNotice(`已导出「${metric.name}」`)
+      await exports.submit({ metricId: metric.id })
+      setNotice(`「${metric.name}」的导出任务已提交，完成后可在「导出任务」里下载`)
     } catch (err) {
       setError(errorMessage(err))
     } finally {
@@ -407,6 +399,13 @@ export default function MetricsPage() {
           </div>
 
           <aside className="metrics-layout__side">
+            <ExportTasksPanel
+              tasks={exports.tasks}
+              error={exports.error}
+              onDownload={(task) => void exports.download(task)}
+              onDelete={(task) => void exports.remove(task)}
+            />
+
             <div className="side__head">
               <h2>热门指标</h2>
             </div>

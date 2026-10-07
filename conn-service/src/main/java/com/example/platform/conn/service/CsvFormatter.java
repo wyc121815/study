@@ -20,6 +20,11 @@ public final class CsvFormatter {
     }
 
     public static byte[] toCsv(SqlQueryResponse result) {
+        return toCsvText(result).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** 文本形式，便于存库（异步导出任务把结果落库后再下载）。 */
+    public static String toCsvText(SqlQueryResponse result) {
         StringBuilder out = new StringBuilder(BOM);
 
         List<SqlResultColumn> columns = result.columns();
@@ -43,7 +48,7 @@ public final class CsvFormatter {
             }
             out.append('\n');
         }
-        return out.toString().getBytes(StandardCharsets.UTF_8);
+        return out.toString();
     }
 
     private static String escape(String value) {

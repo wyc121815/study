@@ -27,7 +27,7 @@ spring:
         - id: conn-service
           uri: ${services.conn-uri}
           predicates:
-            - Path=/api/connections/**,/api/db-types/**,/api/datasources/**,/api/queries/**,/api/metrics/**
+            - Path=/api/connections/**,/api/db-types/**,/api/datasources/**,/api/queries/**,/api/metrics/**,/api/exports/**
       globalcors:
         add-to-simple-url-handler-mapping: true
         cors-configurations:

@@ -169,6 +169,31 @@ export interface MetricRankItem {
   runs: number
 }
 
+export type ExportTaskStatus = 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED'
+
+/** 异步导出任务：提交后轮询状态，完成后下载 */
+export interface ExportTask {
+  taskId: string
+  status: ExportTaskStatus
+  connectionName?: string | null
+  username?: string | null
+  sql: string
+  rowCount?: number | null
+  fileName?: string | null
+  message?: string | null
+  downloadable: boolean
+  createdAt: string
+  finishedAt?: string | null
+  expiresAt?: string | null
+}
+
+export interface ExportRequest {
+  connectionId?: number
+  metricId?: number
+  sql?: string
+  maxRows?: number
+}
+
 export interface ManagedUser {
   id: number
   username: string

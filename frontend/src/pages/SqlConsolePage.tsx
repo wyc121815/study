@@ -7,13 +7,14 @@ import {
   clearQueryHistory,
   deleteQueryHistory,
   executeSql,
-  exportSqlCsv,
   fetchQueryHistory,
 } from '../api/query'
 import { useAuth } from '../auth/AuthContext'
 import { isAdminRole } from '../auth/roles'
+import ExportTasksPanel from '../components/ExportTasksPanel'
 import Layout from '../components/Layout'
 import Modal from '../components/Modal'
+import { useExportTasks } from '../hooks/useExportTasks'
 import type { DataSource, QueryHistoryItem, SqlQueryResult } from '../types'
 
 const DEFAULT_MAX_ROWS = 200
@@ -26,17 +27,6 @@ function errorMessage(err: unknown): string {
 function formatTime(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
-}
-
-function saveBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  URL.revokeObjectURL(url)
 }
 
 export default function SqlConsolePage() {
@@ -64,6 +54,8 @@ export default function SqlConsolePage() {
   const [metricDescription, setMetricDescription] = useState('')
   const [metricError, setMetricError] = useState('')
   const [metricBusy, setMetricBusy] = useState(false)
+
+  const exports = useExportTasks()
 
   const datasourceRef = useRef<DataSource[]>([])
   datasourceRef.current = datasources
@@ -137,14 +129,14 @@ export default function SqlConsolePage() {
   const handleExport = async () => {
     if (!datasourceId || !sql.trim()) return
     setError('')
+    setNotice('')
     try {
-      const file = await exportSqlCsv({
+      await exports.submit({
         connectionId: Number(datasourceId),
         sql,
         maxRows: currentMaxRows(),
       })
-      saveBlob(file.blob, file.filename)
-      setNotice('已导出当前查询结果 CSV')
+      setNotice('导出任务已提交，完成后可在「导出任务」里下载')
     } catch (err) {
       setError(errorMessage(err))
     }
@@ -374,6 +366,13 @@ export default function SqlConsolePage() {
           </div>
 
           <aside className="console__side">
+            <ExportTasksPanel
+              tasks={exports.tasks}
+              error={exports.error}
+              onDownload={(task) => void exports.download(task)}
+              onDelete={(task) => void exports.remove(task)}
+            />
+
             <div className="side__head">
               <h2>查询历史</h2>
               <button type="button" className="link-button" onClick={() => void handleClearHistory()}>

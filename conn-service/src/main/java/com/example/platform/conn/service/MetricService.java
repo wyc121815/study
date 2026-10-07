@@ -56,6 +56,11 @@ public class MetricService {
     private final UserClient userClient;
     private final MetricCacheService cacheService;
     private final boolean allowWrite;
+    private final long singleFlightWaitMillis;
+    private final long singleFlightLockMillis;
+
+    /** 指标不存在的负缓存时长：挡住拿随机 ID 反复刷库的穿透攻击。 */
+    private static final long MISSING_TTL_MILLIS = 30_000L;
 
     public MetricService(MetricDefinitionRepository repository,
                          DbConnectionRepository connectionRepository,
@@ -63,7 +68,9 @@ public class MetricService {
                          SqlQueryService queryService,
                          UserClient userClient,
                          MetricCacheService cacheService,
-                         @Value("${app.query.allow-write:false}") boolean allowWrite) {
+                         @Value("${app.query.allow-write:false}") boolean allowWrite,
+                         @Value("${app.query.single-flight-wait-ms:1500}") long singleFlightWaitMillis,
+                         @Value("${app.query.single-flight-lock-seconds:35}") long singleFlightLockSeconds) {
         this.repository = repository;
         this.connectionRepository = connectionRepository;
         this.guard = guard;
@@ -71,6 +78,8 @@ public class MetricService {
         this.userClient = userClient;
         this.cacheService = cacheService;
         this.allowWrite = allowWrite;
+        this.singleFlightWaitMillis = Math.max(singleFlightWaitMillis, 0);
+        this.singleFlightLockMillis = Math.max(singleFlightLockSeconds, 1) * 1000L;
     }
 
     @Transactional(readOnly = true)
@@ -160,13 +169,33 @@ public class MetricService {
             }
         }
 
-        SqlQueryResponse result = queryService.execute(metric.getDatasourceId(), metric.getSqlText(),
-                maxRows, QueryHistory.SOURCE_METRIC);
-        cacheService.recordRun(id);
-        if (!noCache) {
-            cacheService.save(id, variant, result);
+        // 击穿保护：热点 key 刚过期的一瞬间，多实例会同时 miss。抢到锁的那个去查库，
+        // 其余先等结果，而不是一起把数据库打穿。
+        Optional<String> lockToken = noCache
+                ? Optional.empty()
+                : cacheService.tryLock(id, variant, singleFlightLockMillis);
+        if (!noCache && lockToken.isEmpty()) {
+            Optional<SqlQueryResponse> waited =
+                    cacheService.awaitResult(id, variant, singleFlightWaitMillis);
+            if (waited.isPresent()) {
+                cacheService.recordRun(id);
+                return waited.get();
+            }
+            // 持有锁的实例太慢，与其让用户干等，不如自己也查一次（多一次查询换可用性）
+            log.warn("等待其他实例计算指标超时，本次直接查库: metricId={}", id);
         }
-        return result;
+
+        try {
+            SqlQueryResponse result = queryService.execute(metric.getDatasourceId(), metric.getSqlText(),
+                    maxRows, QueryHistory.SOURCE_METRIC);
+            cacheService.recordRun(id);
+            if (!noCache) {
+                cacheService.save(id, variant, result);
+            }
+            return result;
+        } finally {
+            lockToken.ifPresent(token -> cacheService.releaseLock(id, variant, token));
+        }
     }
 
     public byte[] exportCsv(Long id, Integer maxRows) {
@@ -217,8 +246,14 @@ public class MetricService {
     }
 
     private MetricDefinition require(Long id) {
+        if (cacheService.isKnownMissing(id)) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "指标不存在: " + id);
+        }
         return repository.findById(id)
-                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "指标不存在: " + id));
+                .orElseThrow(() -> {
+                    cacheService.markMissing(id, MISSING_TTL_MILLIS);
+                    return new BusinessException(ErrorCode.NOT_FOUND, "指标不存在: " + id);
+                });
     }
 
     private void requireOwnerOrAdmin(MetricDefinition metric) {
