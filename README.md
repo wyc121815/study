@@ -403,6 +403,17 @@ docker compose up -d
 > 而且**数据看起来是存进去了、只是内容不对**，很难第一时间发现。
 > `SqlScriptCharsetTest` 会强制检查这一点。
 
+已经踩过的库用这个脚本修（幂等，只动注释，不碰列定义和数据）：
+
+```powershell
+Get-Content deploy\mysql\migrations\2026-10-07-repair-comment-mojibake.sql |
+  docker exec -i conn-platform-mysql mysql -uroot -proot123456 --default-character-set=utf8mb4
+```
+
+它的原理是把"编码两次"的过程反过来走一遍（`CONVERT(x USING latin1)` 取回原始字节，
+再按 utf8mb4 解释）；只处理字节里存在 `C3` 的注释，即"被双重编码过"的特征，
+所以重复执行不会把已经修好的注释又转坏。
+
 ## 常见命令
 
 ```powershell
