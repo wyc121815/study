@@ -19,5 +19,11 @@ public record SqlQueryResponse(
         int rowCount,
         boolean truncated,
         long elapsedMillis,
-        String statementType) {
+        String statementType,
+        boolean cached) {
+
+    /** 指标命中缓存时用同一份结果打标记，避免改得到处都是。 */
+    public SqlQueryResponse asCached() {
+        return new SqlQueryResponse(columns, rows, rowCount, truncated, elapsedMillis, statementType, true);
+    }
 }

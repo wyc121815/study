@@ -169,6 +169,7 @@ npm run dev
 | PUT | `/api/metrics/{id}` | 修改指标（创建人或 ADMIN） |
 | DELETE | `/api/metrics/{id}` | 删除指标（创建人或 ADMIN） |
 | POST | `/api/metrics/{id}/run` | 执行指标 |
+| GET | `/api/metrics/ranking` | 指标热度排行（次数存在 Redis） |
 | POST | `/api/metrics/{id}/export` | 导出指标结果为 CSV |
 | GET | `/actuator/health` | 健康检查 |
 
@@ -227,6 +228,44 @@ ADMIN 可以在「用户管理」页新建用户、改昵称/角色、启用/禁
 
 角色判断统一走 `Roles`（忽略大小写与首尾空白），签发令牌时也会把角色归一化成
 大写。不要在业务代码或前端里直接写 `role == "ADMIN"`。
+
+## 指标可视化与缓存
+
+指标页的「查看」会按结果结构自动画图：时间列当 X 轴、数值列当度量、其余非时间列
+当分组维度——带维度的时间序列会自动拆成多条折线。顶部可以在折线 / 柱状 / 饼图 /
+表格之间切换；结果里没有数值列时自动落回表格。
+
+图表库（ECharts）走动态 `import()`，只有真的要看图时才加载这个 chunk，
+首屏包体不受影响。
+
+指标结果缓存在 Redis，不需要每次都压数据库：
+
+| 项 | 说明 |
+| --- | --- |
+| 键 | `metric:result:{指标ID}:{SQL摘要}:rows={行数上限}` |
+| TTL | `QUERY_CACHE_SECONDS`，默认 300 秒；设为 0 关闭缓存 |
+| 命中 | 响应里 `cached=true`，页面显示「缓存命中」 |
+| 失效 | 键里带 SQL 摘要，改了指标定义自然换键，不用手工清理 |
+| 跳过 | 指标页勾选「跳过缓存」，或调 `?noCache=true` |
+
+Redis 只当加速层：读写失败一律降级为直接查库，不影响查询本身。
+
+指标热度排行用的是 Redis 的 ZSET（`metric:usage`），每次执行指标
+`ZINCRBY` 累加一次，指标名在返回时从库里补齐；指标被删掉也不会影响其余排行。
+
+### 演示数据
+
+`deploy/mysql/init/02-demo-data.sql` 会建一个独立的 `platform_demo` 库、
+只读账号 `demo_reader`（只有 SELECT 权限）和最近 120 天的销售明细
+`sales_daily`（6 个渠道 × 大区组合，共 720 行）。
+
+conn-service 启动时会幂等地登记好演示数据源和 4 个演示指标（按名字判重，不会覆盖
+你的修改），所以指标页一打开就有趋势图、渠道对比和地区分布可看。生产环境不想要
+这些演示数据时，设 `APP_DEMO_ENABLED=false` 即可。
+
+脚本本身也是幂等的：唯一键 + `INSERT IGNORE`，存量库直接执行
+`docker exec -i conn-platform-mysql mysql -uroot -p"$密码" < deploy/mysql/init/02-demo-data.sql`
+就能补上，不会产生重复行。
 
 ## 安全设计
 

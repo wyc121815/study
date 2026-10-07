@@ -99,6 +99,8 @@ export interface SqlQueryResult {
   truncated: boolean
   elapsedMillis: number
   statementType: string
+  /** 是否命中 Redis 缓存 */
+  cached: boolean
 }
 
 export interface SqlQueryPayload {
@@ -156,6 +158,15 @@ export interface MetricPayload {
   description?: string
   datasourceId: number
   sql: string
+}
+
+/** 指标热度排行条目，次数来自 Redis */
+export interface MetricRankItem {
+  metricId: number
+  name: string
+  description?: string | null
+  datasourceName?: string | null
+  runs: number
 }
 
 export interface ManagedUser {

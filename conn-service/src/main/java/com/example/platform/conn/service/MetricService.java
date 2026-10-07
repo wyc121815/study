@@ -5,7 +5,13 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +27,7 @@ import com.example.platform.common.security.LoginUser;
 import com.example.platform.common.web.context.UserContext;
 import com.example.platform.conn.client.UserClient;
 import com.example.platform.conn.dto.MetricRequest;
+import com.example.platform.conn.dto.MetricRankItem;
 import com.example.platform.conn.dto.MetricResponse;
 import com.example.platform.conn.dto.SqlQueryResponse;
 import com.example.platform.conn.dto.UserInfoDto;
@@ -47,6 +54,7 @@ public class MetricService {
     private final SqlStatementGuard guard;
     private final SqlQueryService queryService;
     private final UserClient userClient;
+    private final MetricCacheService cacheService;
     private final boolean allowWrite;
 
     public MetricService(MetricDefinitionRepository repository,
@@ -54,12 +62,14 @@ public class MetricService {
                          SqlStatementGuard guard,
                          SqlQueryService queryService,
                          UserClient userClient,
+                         MetricCacheService cacheService,
                          @Value("${app.query.allow-write:false}") boolean allowWrite) {
         this.repository = repository;
         this.connectionRepository = connectionRepository;
         this.guard = guard;
         this.queryService = queryService;
         this.userClient = userClient;
+        this.cacheService = cacheService;
         this.allowWrite = allowWrite;
     }
 
@@ -128,14 +138,35 @@ public class MetricService {
         log.info("删除指标: id={}, name={}", id, metric.getName());
     }
 
-    /** 执行指标：指标本身带数据源，调用方只需给行数上限。 */
-    public SqlQueryResponse run(Long id, Integer maxRows) {
+    /**
+     * 执行指标：指标本身带数据源，调用方只需给行数上限。
+     *
+     * <p>命中 Redis 缓存就直接返回；未命中查库后写回缓存。缓存键里带了 SQL 的
+     * 摘要，所以改了指标定义自然就换了一把新键，不需要额外做失效。</p>
+     */
+    public SqlQueryResponse run(Long id, Integer maxRows, boolean noCache) {
         MetricDefinition metric = require(id);
         if (!MetricDefinition.STATUS_ENABLED.equals(metric.getStatus())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "指标「" + metric.getName() + "」已停用");
         }
-        return queryService.execute(metric.getDatasourceId(), metric.getSqlText(), maxRows,
-                QueryHistory.SOURCE_METRIC);
+
+        String variant = cacheVariant(metric.getSqlText(), maxRows);
+        if (!noCache) {
+            Optional<SqlQueryResponse> cached = cacheService.find(id, variant);
+            if (cached.isPresent()) {
+                cacheService.recordRun(id);
+                log.debug("指标命中缓存: id={}, name={}", id, metric.getName());
+                return cached.get();
+            }
+        }
+
+        SqlQueryResponse result = queryService.execute(metric.getDatasourceId(), metric.getSqlText(),
+                maxRows, QueryHistory.SOURCE_METRIC);
+        cacheService.recordRun(id);
+        if (!noCache) {
+            cacheService.save(id, variant, result);
+        }
+        return result;
     }
 
     public byte[] exportCsv(Long id, Integer maxRows) {
@@ -145,6 +176,44 @@ public class MetricService {
         }
         return queryService.exportCsv(metric.getDatasourceId(), metric.getSqlText(), maxRows,
                 QueryHistory.SOURCE_METRIC);
+    }
+
+    /**
+     * 指标热度排行：次数存在 Redis ZSET 里，指标名从库里补。
+     * 已经被删掉的指标会被跳过，不影响其余排行。
+     */
+    @Transactional(readOnly = true)
+    public List<MetricRankItem> ranking(int limit) {
+        int safeLimit = Math.clamp(limit, 1, 50);
+        Map<Long, Long> usage = cacheService.usageMap(safeLimit);
+        if (usage.isEmpty()) {
+            return List.of();
+        }
+        List<MetricDefinition> metrics = repository.findAllById(usage.keySet());
+        Map<Long, String> datasourceNames = new HashMap<>();
+        loadDatasources(metrics).forEach((key, value) -> datasourceNames.put(key, value.getName()));
+
+        return metrics.stream()
+                .map(metric -> new MetricRankItem(metric.getId(), metric.getName(), metric.getDescription(),
+                        datasourceNames.get(metric.getDatasourceId()), usage.get(metric.getId())))
+                .sorted((left, right) -> Long.compare(right.runs(), left.runs()))
+                .toList();
+    }
+
+    /** 缓存变体：SQL 摘要 + 行数上限，SQL 一改键就变，旧缓存自然过期。 */
+    private static String cacheVariant(String sql, Integer maxRows) {
+        return digest(sql) + ":rows=" + (maxRows == null ? "default" : maxRows);
+    }
+
+    private static String digest(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash, 0, 6);
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 一定存在，兜底走 hashCode，最差是缓存命中率下降
+            return Integer.toHexString(value.hashCode());
+        }
     }
 
     private MetricDefinition require(Long id) {

@@ -6,13 +6,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageConversionException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import com.example.platform.common.core.api.ErrorCode;
@@ -59,6 +63,22 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Result<Void>> handleBadRequest(Exception e) {
         log.warn("请求不合法: {}", e.getMessage());
         return build(ErrorCode.BAD_REQUEST, "请求参数不合法");
+    }
+
+    /** 路径存在但 HTTP 方法不对（例如把 PUT 打到集合接口上），要回 405 而不是 500。 */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Result<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
+        log.warn("请求方法不支持: method={}, message={}", e.getMethod(), e.getMessage());
+        return build(ErrorCode.METHOD_NOT_ALLOWED,
+                "该接口不支持 " + e.getMethod() + " 方法");
+    }
+
+    /** 请求体/参数类型不对，属于客户端错误。 */
+    @ExceptionHandler({HttpMessageConversionException.class, MethodArgumentTypeMismatchException.class,
+            HttpMediaTypeNotSupportedException.class})
+    public ResponseEntity<Result<Void>> handleUnsupportedRequest(Exception e) {
+        log.warn("请求格式不支持: {}", e.getMessage());
+        return build(ErrorCode.BAD_REQUEST, "请求格式不支持");
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

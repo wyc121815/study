@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { fetchDataSources } from '../api/datasource'
 import {
   deleteMetric,
   exportMetricCsv,
+  fetchMetricRanking,
   fetchMetrics,
   runMetric,
   updateMetric,
@@ -13,7 +14,20 @@ import { useAuth } from '../auth/AuthContext'
 import { isAdminRole } from '../auth/roles'
 import Layout from '../components/Layout'
 import Modal from '../components/Modal'
-import type { DataSource, Metric, SqlQueryResult } from '../types'
+import { buildChartSpec, type ChartType } from '../charts/chartSpec'
+import type { DataSource, Metric, MetricRankItem, SqlQueryResult } from '../types'
+
+type ViewMode = ChartType | 'table'
+
+// 图表库体积不小，按需加载：只有真的要看图时才下载这个 chunk
+const MetricChart = lazy(() => import('../components/MetricChart'))
+
+const VIEW_OPTIONS: { value: ViewMode; label: string }[] = [
+  { value: 'line', label: '折线' },
+  { value: 'bar', label: '柱状' },
+  { value: 'pie', label: '饼图' },
+  { value: 'table', label: '表格' },
+]
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -53,21 +67,32 @@ export default function MetricsPage() {
   const isAdmin = isAdminRole(user?.role)
 
   const [metrics, setMetrics] = useState<Metric[]>([])
+  const [ranking, setRanking] = useState<MetricRankItem[]>([])
   const [datasources, setDatasources] = useState<DataSource[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busyId, setBusyId] = useState<number | null>(null)
   const [runState, setRunState] = useState<RunState | null>(null)
+  const [view, setView] = useState<ViewMode>('line')
+  const [noCache, setNoCache] = useState(false)
+
   const [editor, setEditor] = useState<EditorState | null>(null)
   const [editorError, setEditorError] = useState('')
   const [editorBusy, setEditorBusy] = useState(false)
+
+  const chartSpec = useMemo(
+    () => (runState ? buildChartSpec(runState.result) : null),
+    [runState],
+  )
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      setMetrics(await fetchMetrics())
+      const [list, top] = await Promise.all([fetchMetrics(), fetchMetricRanking(8)])
+      setMetrics(list)
+      setRanking(top)
     } catch (err) {
       setError(errorMessage(err))
     } finally {
@@ -80,6 +105,13 @@ export default function MetricsPage() {
     fetchDataSources().then(setDatasources).catch(() => setDatasources([]))
   }, [load])
 
+  // 没有可用图表时（比如结果全是文本列）自动落到表格视图
+  useEffect(() => {
+    if (runState && !chartSpec) {
+      setView('table')
+    }
+  }, [runState, chartSpec])
+
   const canEdit = (metric: Metric) => isAdmin || metric.createdBy === user?.id
 
   const handleRun = async (metric: Metric) => {
@@ -87,8 +119,10 @@ export default function MetricsPage() {
     setError('')
     setNotice('')
     try {
-      const result = await runMetric(metric.id)
+      const result = await runMetric(metric.id, undefined, noCache)
       setRunState({ metric, result })
+      setView(chartSpecOf(result)?.preferred ?? 'table')
+      fetchMetricRanking(8).then(setRanking).catch(() => undefined)
     } catch (err) {
       setRunState(null)
       setError(errorMessage(err))
@@ -174,9 +208,19 @@ export default function MetricsPage() {
               在「SQL 查询」页把调好的 SQL 存为指标，就能被所有人复用；共 {metrics.length} 个
             </p>
           </div>
-          <button type="button" className="button button--ghost" onClick={() => void navigate('/sql')}>
-            去 SQL 查询
-          </button>
+          <div className="panel__head-actions">
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={noCache}
+                onChange={(event) => setNoCache(event.target.checked)}
+              />
+              <span>跳过缓存</span>
+            </label>
+            <button type="button" className="button button--ghost" onClick={() => void navigate('/sql')}>
+              去 SQL 查询
+            </button>
+          </div>
         </div>
 
         {error ? (
@@ -196,145 +240,206 @@ export default function MetricsPage() {
           </p>
         ) : null}
 
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>指标</th>
-                <th>数据源</th>
-                <th>创建人</th>
-                <th>更新时间</th>
-                <th className="table__actions">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={5} className="table__empty">
-                    加载中…
-                  </td>
-                </tr>
-              ) : metrics.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="table__empty">
-                    还没有指标，去「SQL 查询」里把调好的 SQL 存为指标吧
-                  </td>
-                </tr>
-              ) : (
-                metrics.map((metric) => (
-                  <tr key={metric.id}>
-                    <td>
-                      <div className="cell__main">{metric.name}</div>
-                      {metric.description ? <div className="cell__sub">{metric.description}</div> : null}
-                    </td>
-                    <td>{datasourceLabel(metric)}</td>
-                    <td>{metric.createdByName ?? (metric.createdBy ? `#${metric.createdBy}` : '—')}</td>
-                    <td>{formatTime(metric.updatedAt)}</td>
-                    <td className="table__actions">
-                      <button
-                        type="button"
-                        className="link-button"
-                        disabled={busyId === metric.id}
-                        onClick={() => void handleRun(metric)}
-                      >
-                        执行
-                      </button>
-                      <button
-                        type="button"
-                        className="link-button"
-                        disabled={busyId === metric.id}
-                        onClick={() => void handleExport(metric)}
-                      >
-                        导出
-                      </button>
-                      <button
-                        type="button"
-                        className="link-button"
-                        onClick={() =>
-                          void navigate('/sql', {
-                            state: { connectionId: metric.datasourceId, sql: metric.sql },
-                          })
-                        }
-                      >
-                        在查询台打开
-                      </button>
-                      {canEdit(metric) ? (
-                        <>
-                          <button type="button" className="link-button" onClick={() => openEditor(metric)}>
-                            编辑
-                          </button>
-                          <button
-                            type="button"
-                            className="link-button link-button--danger"
-                            disabled={busyId === metric.id}
-                            onClick={() => void handleDelete(metric)}
-                          >
-                            删除
-                          </button>
-                        </>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {runState ? (
-          <div className="query-result">
-            <div className="query-result__meta">
-              <span className="badge badge--ok">{runState.metric.name}</span>
-              <span className="muted">
-                返回 {runState.result.rowCount} 行 · 耗时 {runState.result.elapsedMillis} ms
-              </span>
-              {runState.result.truncated ? <span className="badge badge--failed">结果已截断</span> : null}
-              <button type="button" className="link-button" onClick={() => setRunState(null)}>
-                收起
-              </button>
-            </div>
+        <div className="metrics-layout">
+          <div className="metrics-layout__main">
             <div className="table-wrap">
               <table className="table">
                 <thead>
                   <tr>
-                    {runState.result.columns.map((column, index) => (
-                      <th key={`${column.name}-${index}`}>
-                        <div className="cell__main">{column.label || column.name}</div>
-                        <div className="cell__sub">{column.typeName}</div>
-                      </th>
-                    ))}
+                    <th>指标</th>
+                    <th>数据源</th>
+                    <th>创建人</th>
+                    <th>更新时间</th>
+                    <th className="table__actions">操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {runState.result.rows.length === 0 ? (
+                  {loading ? (
                     <tr>
-                      <td colSpan={Math.max(runState.result.columns.length, 1)} className="table__empty">
-                        查询成功，没有返回数据
+                      <td colSpan={5} className="table__empty">
+                        加载中…
+                      </td>
+                    </tr>
+                  ) : metrics.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="table__empty">
+                        还没有指标，去「SQL 查询」里把调好的 SQL 存为指标吧
                       </td>
                     </tr>
                   ) : (
-                    runState.result.rows.map((row, rowIndex) => (
-                      <tr key={rowIndex}>
-                        {runState.result.columns.map((_, columnIndex) => {
-                          const cell = row[columnIndex]
-                          return (
-                            <td key={columnIndex} className="mono query-result__cell">
-                              {cell === null || cell === undefined ? (
-                                <span className="query-result__null">NULL</span>
-                              ) : (
-                                String(cell)
-                              )}
-                            </td>
-                          )
-                        })}
+                    metrics.map((metric) => (
+                      <tr key={metric.id} className={runState?.metric.id === metric.id ? 'row--active' : ''}>
+                        <td>
+                          <div className="cell__main">{metric.name}</div>
+                          {metric.description ? <div className="cell__sub">{metric.description}</div> : null}
+                        </td>
+                        <td>{datasourceLabel(metric)}</td>
+                        <td>{metric.createdByName ?? (metric.createdBy ? `#${metric.createdBy}` : '—')}</td>
+                        <td>{formatTime(metric.updatedAt)}</td>
+                        <td className="table__actions">
+                          <button
+                            type="button"
+                            className="link-button"
+                            disabled={busyId === metric.id}
+                            onClick={() => void handleRun(metric)}
+                          >
+                            查看
+                          </button>
+                          <button
+                            type="button"
+                            className="link-button"
+                            disabled={busyId === metric.id}
+                            onClick={() => void handleExport(metric)}
+                          >
+                            导出
+                          </button>
+                          <button
+                            type="button"
+                            className="link-button"
+                            onClick={() =>
+                              void navigate('/sql', {
+                                state: { connectionId: metric.datasourceId, sql: metric.sql },
+                              })
+                            }
+                          >
+                            在查询台打开
+                          </button>
+                          {canEdit(metric) ? (
+                            <>
+                              <button type="button" className="link-button" onClick={() => openEditor(metric)}>
+                                编辑
+                              </button>
+                              <button
+                                type="button"
+                                className="link-button link-button--danger"
+                                disabled={busyId === metric.id}
+                                onClick={() => void handleDelete(metric)}
+                              >
+                                删除
+                              </button>
+                            </>
+                          ) : null}
+                        </td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
             </div>
+
+            {runState ? (
+              <div className="chart-card">
+                <div className="chart-card__head">
+                  <div>
+                    <h2>{runState.metric.name}</h2>
+                    <p className="muted">
+                      {runState.result.rowCount} 行 ·{' '}
+                      {runState.result.cached
+                        ? `缓存命中（首次查询 ${runState.result.elapsedMillis} ms）`
+                        : `耗时 ${runState.result.elapsedMillis} ms`}
+                      {runState.result.truncated ? ' · 已截断' : ''}
+                    </p>
+                  </div>
+                  <div className="chart-card__actions">
+                    {runState.result.cached ? (
+                      <span className="badge badge--ok">缓存命中</span>
+                    ) : (
+                      <span className="badge badge--unknown">实时查询</span>
+                    )}
+                    <div className="segmented">
+                      {VIEW_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={view === option.value ? 'segmented__item segmented__item--active' : 'segmented__item'}
+                          disabled={option.value === 'pie' && !chartSpec?.pieCapable}
+                          onClick={() => setView(option.value)}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                    <button type="button" className="link-button" onClick={() => setRunState(null)}>
+                      收起
+                    </button>
+                  </div>
+                </div>
+
+                {view !== 'table' && chartSpec ? (
+                  <Suspense fallback={<div className="chart chart--loading">图表加载中…</div>}>
+                    <MetricChart spec={chartSpec} type={view} />
+                  </Suspense>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          {runState.result.columns.map((column, index) => (
+                            <th key={`${column.name}-${index}`}>
+                              <div className="cell__main">{column.label || column.name}</div>
+                              <div className="cell__sub">{column.typeName}</div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {runState.result.rows.length === 0 ? (
+                          <tr>
+                            <td colSpan={Math.max(runState.result.columns.length, 1)} className="table__empty">
+                              查询成功，没有返回数据
+                            </td>
+                          </tr>
+                        ) : (
+                          runState.result.rows.map((row, rowIndex) => (
+                            <tr key={rowIndex}>
+                              {runState.result.columns.map((_, columnIndex) => {
+                                const cell = row[columnIndex]
+                                return (
+                                  <td key={columnIndex} className="mono query-result__cell">
+                                    {cell === null || cell === undefined ? (
+                                      <span className="query-result__null">NULL</span>
+                                    ) : (
+                                      String(cell)
+                                    )}
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
-        ) : null}
+
+          <aside className="metrics-layout__side">
+            <div className="side__head">
+              <h2>热门指标</h2>
+            </div>
+            {ranking.length === 0 ? (
+              <p className="muted">还没有查询记录，热度会随使用累积</p>
+            ) : (
+              <ol className="ranking">
+                {ranking.map((item, index) => (
+                  <li key={item.metricId} className="ranking__item">
+                    <span className={`ranking__no ranking__no--${index < 3 ? index + 1 : 'rest'}`}>{index + 1}</span>
+                    <span className="ranking__body">
+                      <span className="ranking__name">{item.name}</span>
+                      {item.datasourceName ? (
+                        <span className="ranking__sub">{item.datasourceName}</span>
+                      ) : null}
+                    </span>
+                    <span className="ranking__runs">{item.runs} 次</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+            <p className="side__note">次数由 Redis 计数，用于热度排序</p>
+          </aside>
+        </div>
       </section>
 
       {editor ? (
@@ -358,7 +463,7 @@ export default function MetricsPage() {
               />
             </div>
             <div className="field">
-              <label className="field__label">SQL（只读，保存时会重新校验）</label>
+              <label className="field__label">SQL（保存时会重新校验只读）</label>
               <textarea
                 className="field__input query__editor"
                 value={editor.sql}
@@ -384,4 +489,9 @@ export default function MetricsPage() {
       ) : null}
     </Layout>
   )
+}
+
+/** 独立成函数，供 handleRun 在 setState 之前推断默认视图。 */
+function chartSpecOf(result: SqlQueryResult) {
+  return buildChartSpec(result)
 }

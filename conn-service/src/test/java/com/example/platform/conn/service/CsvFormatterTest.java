@@ -18,7 +18,7 @@ class CsvFormatterTest {
                 List.of(new SqlResultColumn("id", "id", "BIGINT"),
                         new SqlResultColumn("name", "名称", "VARCHAR")),
                 List.of(List.of(1, "张三"), List.of(2, "李四")),
-                2, false, 12, "SELECT");
+                2, false, 12, "SELECT", false);
 
         String csv = new String(CsvFormatter.toCsv(result), StandardCharsets.UTF_8);
 
@@ -31,7 +31,7 @@ class CsvFormatterTest {
         SqlQueryResponse result = new SqlQueryResponse(
                 List.of(new SqlResultColumn("a", "a", "VARCHAR"), new SqlResultColumn("b", "b", "VARCHAR")),
                 List.of(java.util.Arrays.asList("x,\"y\"", null)),
-                1, false, 3, "SELECT");
+                1, false, 3, "SELECT", false);
 
         String csv = new String(CsvFormatter.toCsv(result), StandardCharsets.UTF_8);
 

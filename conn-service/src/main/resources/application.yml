@@ -36,6 +36,14 @@ spring:
             connect-timeout: 2000
             read-timeout: 5000
             logger-level: basic
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      # Redis 只用来加速，超时给短一点，抖动时快速降级为直接查库
+      timeout: 1s
+      connect-timeout: 1s
 
 app:
   jwt:
@@ -57,6 +65,13 @@ app:
     timeout-seconds: ${QUERY_TIMEOUT:30}
     # 默认只读：只放行 SELECT/SHOW/DESCRIBE/EXPLAIN 等；确认需要写操作再改 true
     allow-write: ${QUERY_ALLOW_WRITE:false}
+    # 指标结果缓存时长（秒）；设为 0 关闭缓存
+    cache-seconds: ${QUERY_CACHE_SECONDS:300}
+  demo:
+    # 首次启动时创建演示数据源与演示指标（幂等）；生产可设 APP_DEMO_ENABLED=false 关闭
+    enabled: ${APP_DEMO_ENABLED:true}
+    host: ${MYSQL_HOST:127.0.0.1}
+    port: ${MYSQL_PORT:3306}
   clients:
     # 留空 = 走注册中心 + 负载均衡；本地模式填 http://localhost:8081
     auth-service-url: ${AUTH_SERVICE_URL:}

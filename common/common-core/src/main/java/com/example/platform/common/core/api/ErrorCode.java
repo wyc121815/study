@@ -20,6 +20,7 @@ public enum ErrorCode {
     ACCOUNT_LOCKED(40105, "账号已被临时锁定，请稍后再试", 429),
     FORBIDDEN(40300, "没有操作权限", 403),
     NOT_FOUND(40400, "资源不存在", 404),
+    METHOD_NOT_ALLOWED(40500, "请求方法不支持", 405),
     CONFLICT(40900, "资源已存在或状态冲突", 409),
     TOO_MANY_REQUESTS(42900, "操作过于频繁，请稍后再试", 429),
 

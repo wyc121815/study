@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.example.platform.common.core.api.Result;
 import com.example.platform.conn.dto.MetricRequest;
+import com.example.platform.conn.dto.MetricRankItem;
 import com.example.platform.conn.dto.MetricResponse;
 import com.example.platform.conn.dto.SqlQueryResponse;
 import com.example.platform.conn.service.MetricService;
@@ -69,8 +70,15 @@ public class MetricController {
 
     @PostMapping("/{id}/run")
     public Result<SqlQueryResponse> run(@PathVariable Long id,
-                                        @RequestParam(required = false) Integer maxRows) {
-        return Result.ok(service.run(id, maxRows));
+                                        @RequestParam(required = false) Integer maxRows,
+                                        @RequestParam(defaultValue = "false") boolean noCache) {
+        return Result.ok(service.run(id, maxRows, noCache));
+    }
+
+    /** 指标热度排行（按被查询次数），次数来自 Redis。 */
+    @GetMapping("/ranking")
+    public Result<List<MetricRankItem>> ranking(@RequestParam(defaultValue = "10") int limit) {
+        return Result.ok(service.ranking(limit));
     }
 
     /** 导出指标结果为 CSV，直接返回文件流。 */

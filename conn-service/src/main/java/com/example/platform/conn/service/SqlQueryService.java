@@ -208,7 +208,7 @@ public class SqlQueryService {
                     }
 
                     return new SqlQueryResponse(columns, rows, rows.size(), truncated,
-                            System.currentTimeMillis() - start, statementType);
+                            System.currentTimeMillis() - start, statementType, false);
                 }
             }
         }
